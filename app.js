@@ -12,7 +12,7 @@
     { name: "S", min: 60, glow: "#ffd76a", label: "Monarque" },
   ];
 
-  var DEFAULT_TARGETS = { pushups: 10, squats: 10, abdos: 15, plank: 15 };
+  var DEFAULT_TARGETS = { pushups: 10, squats: 10, abdos: 10, plank: 30 };
   var CAPS = { pushups: 60, squats: 60, abdos: 80, plank: 120 };
   var STEP = { pushups: 2, squats: 2, abdos: 3, plank: 5 };
   var REDEMPTION_MULT = 1.5;
