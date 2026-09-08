@@ -1,4 +1,4 @@
-const CACHE_NAME = "solo-fit-v2";
+const CACHE_NAME = "solo-fit-v3";
 const ASSETS = [
   "./",
   "./index.html",

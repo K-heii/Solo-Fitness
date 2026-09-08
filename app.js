@@ -2,6 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
+  var APP_VERSION = "v2.1 — abdos, rédemption sans reset, feedback par exercice, Reevaluation Day";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -578,6 +579,7 @@
       '<div class="slf-overlay" data-action="close-settings"><div class="slf-modal" data-stop="1">' +
         '<div class="slf-modalheadrow"><p class="slf-mono slf-eyebrow">RAPPEL QUOTIDIEN</p><button class="slf-closebtn" data-action="close-settings">' + icon("x", 16) + "</button></div>" +
         body +
+        '<p class="slf-versiontag slf-mono">' + esc(APP_VERSION) + "</p>" +
       "</div></div>"
     );
   }

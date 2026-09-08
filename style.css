@@ -441,6 +441,15 @@ body {
 .slf-histbottom .slf-mono { font-size: 11px; }
 .slf-histicons { display: flex; align-items: center; gap: 4px; }
 
+.slf-versiontag {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--cyan-dim);
+  font-size: 10px;
+  color: var(--dim);
+  text-align: center;
+}
+
 button { -webkit-tap-highlight-color: transparent; }
 input[type="time"] { color-scheme: dark; }
 
