@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "solo-fit-profile-v2"; // Mise à jour de la clé pour éviter les conflits
+  var STORAGE_KEY = "solo-fit-profile-v1";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -12,16 +12,15 @@
     { name: "S", min: 60, glow: "#ffd76a", label: "Monarque" },
   ];
 
-  var DEFAULT_TARGETS = { pushups: 10, squats: 10, legraises: 10, plank: 20 };
-  var CAPS = { pushups: 60, squats: 80, legraises: 50, plank: 120 };
-  var STEP = { pushups: 2, squats: 3, legraises: 2, plank: 5 };
-  var COEFF = { pushups: 0.65, squats: 0.70, legraises: 0.65, plank: 0.75 };
-  var REDEMPTION_MULT = 1.3;
+  var DEFAULT_TARGETS = { pushups: 12, squats: 12, abdos: 18, plank: 30 };
+  var CAPS = { pushups: 60, squats: 60, abdos: 80, plank: 120 };
+  var STEP = { pushups: 2, squats: 2, abdos: 3, plank: 5 };
+  var REDEMPTION_MULT = 1.5;
 
   var EXO_META = {
     pushups: { label: "Pompes", unit: "", icon: "dumbbell" },
     squats: { label: "Squats", unit: "", icon: "activity" },
-    legraises: { label: "Relevés de jambes", unit: "", icon: "layers" },
+    abdos: { label: "Abdos", unit: "", icon: "layers" },
     plank: { label: "Gainage", unit: "s", icon: "timer" },
   };
 
@@ -31,13 +30,19 @@
     var y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), day = String(d.getDate()).padStart(2, "0");
     return y + "-" + m + "-" + day;
   }
-  function isSunday(d) {
-    d = d ? new Date(d + "T00:00:00") : new Date();
-    return d.getDay() === 0;
-  }
   function daysBetween(a, b) {
     var da = new Date(a + "T00:00:00"), db = new Date(b + "T00:00:00");
     return Math.round((db - da) / 86400000);
+  }
+  function isSunday(dateStr) {
+    return new Date(dateStr + "T00:00:00").getDay() === 0;
+  }
+  function reevalBump(maxVal, current, isPlank) {
+    if (!(maxVal > current)) return 0;
+    var raw = Math.round(maxVal / 10);
+    raw = Math.max(1, raw);
+    var cap = isPlank ? 15 : 8;
+    return Math.min(raw, cap);
   }
   function getRank(streak) {
     var r = RANKS[0];
@@ -57,7 +62,7 @@
     return {
       pushups: Math.min(CAPS.pushups, Math.ceil(t.pushups * REDEMPTION_MULT)),
       squats: Math.min(CAPS.squats, Math.ceil(t.squats * REDEMPTION_MULT)),
-      legraises: Math.min(CAPS.legraises, Math.ceil(t.legraises * REDEMPTION_MULT)),
+      abdos: Math.min(CAPS.abdos, Math.ceil(t.abdos * REDEMPTION_MULT)),
       plank: Math.min(CAPS.plank, Math.ceil(t.plank * REDEMPTION_MULT)),
     };
   }
@@ -67,7 +72,6 @@
       best: 0,
       lastCompletedDate: null,
       targets: Object.assign({}, DEFAULT_TARGETS),
-      gauge: 0, // Jauge de validation (0/3)
       history: [],
       reminder: { enabled: false, time: "18:00" },
       lastNotifiedDate: null,
@@ -79,7 +83,7 @@
     });
   }
 
-  // ---------- icons ----------
+  // ---------- tiny icon set (inline SVG, stroke-based, 24x24) ----------
   var ICONS = {
     dumbbell: '<line x1="4" y1="12" x2="20" y2="12"/><line x1="7" y1="8.5" x2="7" y2="15.5"/><line x1="17" y1="8.5" x2="17" y2="15.5"/><line x1="3" y1="10" x2="3" y2="14"/><line x1="21" y1="10" x2="21" y2="14"/>',
     activity: '<polyline points="3,12 8,12 10,5 14,19 16,12 21,12" fill="none"/>',
@@ -97,7 +101,6 @@
     sword: '<line x1="5" y1="19" x2="16" y2="8"/><polyline points="14,6 18,4 20,6 16,10" fill="none"/><line x1="4" y1="16" x2="7" y2="19"/>',
     scroll: '<rect x="5" y="4" width="14" height="16" rx="2" fill="none"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/>',
     trendingUp: '<polyline points="3,17 9,11 13,15 21,6" fill="none"/><polyline points="15,6 21,6 21,12" fill="none"/>',
-    crown: '<path d="M2 4l3 12h14l3-12-6 7-4-8-4 8-6-7z" fill="none"/>',
   };
   function icon(name, size, opts) {
     opts = opts || {};
@@ -115,10 +118,13 @@
   var profile = loadProfile();
   var ui = {
     view: "quest",
-    checked: { pushups: false, squats: false, legraises: false, plank: false },
-    testMaxInputs: { pushups: 10, squats: 10, legraises: 10, plank: 20 },
+    checked: { pushups: false, squats: false, abdos: false, plank: false },
     showFeedback: false,
     showSettings: false,
+    feedbackChoice: { pushups: null, squats: null, abdos: null, plank: null },
+    reevalAnswered: { date: null, answer: null },
+    reevalValues: {},
+    reevalError: false,
     rankUpFlash: null,
     error: false,
     notifPermission: "Notification" in window ? Notification.permission : "unsupported",
@@ -152,136 +158,142 @@
   function getMode() {
     var today = todayStr();
     if (profile.lastCompletedDate === today) return "done";
+    var reevalToday = ui.reevalAnswered.date === today ? ui.reevalAnswered.answer : null;
+    if (isSunday(today) && reevalToday === null) return "reeval-prompt";
+    if (reevalToday === "yes") return "reeval";
     if (profile.lastCompletedDate) {
       var diff = daysBetween(profile.lastCompletedDate, today);
       if (diff > 1) return "redemption";
     }
-    if (isSunday()) return "testmax";
     return "normal";
   }
 
   // ---------- actions ----------
   function toggleTask(key) {
-    if (getMode() === "done") return;
+    var mode = getMode();
+    if (mode !== "normal" && mode !== "redemption") return;
     ui.checked[key] = !ui.checked[key];
     render();
   }
   function openFeedback() {
-    var mode = getMode();
-    if (mode === "testmax") {
-      finishTestMax();
-      return;
-    }
     var vals = Object.keys(ui.checked).map(function (k) { return ui.checked[k]; });
     if (vals.indexOf(false) !== -1) return;
+    ui.feedbackChoice = { pushups: null, squats: null, abdos: null, plank: null };
     ui.showFeedback = true;
     render();
   }
-
-  function finishTestMax() {
-    var today = todayStr();
-    var wasRank = getRank(profile.streak).name;
-    var newStreak = profile.streak + 1;
-    var newBest = Math.max(profile.best, newStreak);
-
-    // Recalcul des targets selon les perfs max
-    var newTargets = {
-      pushups: Math.min(CAPS.pushups, Math.max(5, Math.round(ui.testMaxInputs.pushups * COEFF.pushups))),
-      squats: Math.min(CAPS.squats, Math.max(5, Math.round(ui.testMaxInputs.squats * COEFF.squats))),
-      legraises: Math.min(CAPS.legraises, Math.max(5, Math.round(ui.testMaxInputs.legraises * COEFF.legraises))),
-      plank: Math.min(CAPS.plank, Math.max(10, Math.round(ui.testMaxInputs.plank * COEFF.plank))),
-    };
-
-    var entry = {
-      date: today,
-      mode: "testmax",
-      pushups: ui.testMaxInputs.pushups,
-      squats: ui.testMaxInputs.squats,
-      legraises: ui.testMaxInputs.legraises,
-      plank: ui.testMaxInputs.plank,
-      feedback: "boss",
-      rank: getRank(newStreak).name,
-    };
-
-    var next = Object.assign({}, profile, {
-      streak: newStreak,
-      best: newBest,
-      lastCompletedDate: today,
-      gauge: 0, // Reset de la jauge après le boss
-      targets: newTargets,
-      history: [entry].concat(profile.history),
-    });
-
-    var newRank = getRank(newStreak).name;
-    saveProfile(next);
-    if (newRank !== wasRank) triggerRankUp(newRank);
+  function setFeedback(key, value) {
+    ui.feedbackChoice[key] = value;
+    render();
   }
+  function finishSession() {
+    var keys = Object.keys(EXO_META);
+    var complete = keys.every(function (k) { return ui.feedbackChoice[k] !== null; });
+    if (!complete) return;
 
-  function finish(feedback) {
     var mode = getMode();
     var today = todayStr();
     var targets = mode === "redemption" ? redemptionTargets(profile.targets) : profile.targets;
     var wasRank = getRank(profile.streak).name;
-    var newStreak = mode === "redemption" ? 1 : profile.streak + 1;
+    var newStreak = profile.streak + 1; // la rédemption conserve désormais la streak
     var newBest = Math.max(profile.best, newStreak);
-    
-    var newGauge = profile.gauge;
-    var newTargets = Object.assign({}, profile.targets);
 
-    if (mode === "normal") {
-      if (feedback === "facile") {
-        newGauge += 1;
-        if (newGauge >= 3) {
-          // Déblocage niveau supérieur !
-          newGauge = 0;
-          newTargets = {
-            pushups: Math.min(CAPS.pushups, profile.targets.pushups + STEP.pushups),
-            squats: Math.min(CAPS.squats, profile.targets.squats + STEP.squats),
-            legraises: Math.min(CAPS.legraises, profile.targets.legraises + STEP.legraises),
-            plank: Math.min(CAPS.plank, profile.targets.plank + STEP.plank),
-          };
-        }
-      } else {
-        newGauge = Math.max(0, newGauge - 1);
-      }
-    }
+    var newTargets = {};
+    keys.forEach(function (k) {
+      var easy = ui.feedbackChoice[k] === "facile";
+      newTargets[k] = easy ? Math.min(CAPS[k], profile.targets[k] + STEP[k]) : profile.targets[k];
+    });
 
     var entry = {
       date: today,
       mode: mode,
       pushups: targets.pushups,
       squats: targets.squats,
-      legraises: targets.legraises,
+      abdos: targets.abdos,
       plank: targets.plank,
-      feedback: feedback,
+      feedback: Object.assign({}, ui.feedbackChoice),
       rank: getRank(newStreak).name,
     };
-
     var next = Object.assign({}, profile, {
       streak: newStreak,
       best: newBest,
       lastCompletedDate: today,
-      gauge: newGauge,
       targets: newTargets,
       history: [entry].concat(profile.history),
     });
-
     ui.showFeedback = false;
-    ui.checked = { pushups: false, squats: false, legraises: false, plank: false };
+    ui.checked = { pushups: false, squats: false, abdos: false, plank: false };
     var newRank = getRank(newStreak).name;
     saveProfile(next);
-    if (newRank !== wasRank) triggerRankUp(newRank);
+    flashRankUp(wasRank, newRank);
   }
 
-  function triggerRankUp(rank) {
-    ui.rankUpFlash = rank;
+  function answerReeval(value) {
+    ui.reevalAnswered = { date: todayStr(), answer: value };
+    if (value === "yes") {
+      ui.reevalValues = {};
+      ui.reevalError = false;
+    }
+    render();
+  }
+  function setReevalValue(key, raw) {
+    var val = parseFloat(raw);
+    ui.reevalValues[key] = isNaN(val) ? null : val;
+  }
+  function submitReeval() {
+    var keys = Object.keys(EXO_META);
+    var v = ui.reevalValues;
+    var complete = keys.every(function (k) { return typeof v[k] === "number" && v[k] > 0; });
+    if (!complete) {
+      ui.reevalError = true;
+      render();
+      return;
+    }
+    ui.reevalError = false;
+
+    var today = todayStr();
+    var wasRank = getRank(profile.streak).name;
+    var newStreak = profile.streak + 1;
+    var newBest = Math.max(profile.best, newStreak);
+
+    var newTargets = {};
+    keys.forEach(function (k) {
+      var isPlank = k === "plank";
+      var bump = reevalBump(v[k], profile.targets[k], isPlank);
+      newTargets[k] = Math.min(CAPS[k], profile.targets[k] + bump);
+    });
+
+    var entry = {
+      date: today,
+      mode: "reeval",
+      pushups: v.pushups,
+      squats: v.squats,
+      abdos: v.abdos,
+      plank: v.plank,
+      feedback: null,
+      rank: getRank(newStreak).name,
+    };
+    var next = Object.assign({}, profile, {
+      streak: newStreak,
+      best: newBest,
+      lastCompletedDate: today,
+      targets: newTargets,
+      history: [entry].concat(profile.history),
+    });
+    ui.reevalValues = {};
+    var newRank = getRank(newStreak).name;
+    saveProfile(next);
+    flashRankUp(wasRank, newRank);
+  }
+  function flashRankUp(wasRank, newRank) {
+    if (newRank === wasRank) return;
+    ui.rankUpFlash = newRank;
     render();
     setTimeout(function () {
       ui.rankUpFlash = null;
       render();
     }, 3200);
   }
-
   function setReminderTime(t) {
     saveProfile(Object.assign({}, profile, { reminder: Object.assign({}, profile.reminder, { time: t }) }));
   }
@@ -299,6 +311,25 @@
       }
     });
   }
+  function checkReminder() {
+    if (!profile.reminder || !profile.reminder.enabled) return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    var now = new Date();
+    var nowTime = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+    var today = todayStr();
+    var alreadyDone = profile.lastCompletedDate === today;
+    var alreadyNotified = profile.lastNotifiedDate === today;
+    if (!alreadyDone && !alreadyNotified && nowTime >= profile.reminder.time) {
+      try {
+        new Notification("Quête en attente, Chasseur", {
+          body: "Ta quête quotidienne n'est pas terminée. Ne brise pas ta série.",
+          icon: "icon-192.png",
+        });
+      } catch (e) { /* ignore */ }
+      saveProfile(Object.assign({}, profile, { lastNotifiedDate: today }));
+    }
+  }
+  setInterval(checkReminder, 30000);
 
   // ---------- templates ----------
   function headerTpl() {
@@ -335,17 +366,6 @@
     );
   }
 
-  function testMaxRowTpl(key) {
-    var meta = EXO_META[key];
-    return (
-      '<div class="slf-taskrow">' +
-        '<div class="slf-taskicon">' + icon(meta.icon, 18) + "</div>" +
-        '<div class="slf-taskinfo"><p class="slf-tasklabel">' + esc(meta.label) + '</p><p class="slf-dim">Score Max ' + esc(meta.unit) + '</p></div>' +
-        '<input type="number" class="slf-timeinput slf-mono" style="width:70px;text-align:center;" data-action="set-max" data-key="' + key + '" value="' + (ui.testMaxInputs[key] || 10) + '" min="1" />' +
-      "</div>"
-    );
-  }
-
   function rankProgressTpl() {
     var info = nextRankInfo(profile.streak);
     return (
@@ -359,38 +379,79 @@
     );
   }
 
+  function reevalPromptTpl() {
+    return (
+      '<div class="slf-window"><div class="slf-windowhead"><span class="slf-mono">◈ REEVALUATION DAY ◈</span></div>' +
+      '<div class="slf-windowbody slf-donebody">' +
+        icon("trendingUp", 34, { color: "#ffd76a" }) +
+        '<p class="slf-donetext">C\'est dimanche, Chasseur. Veux-tu être réévalué aujourd\'hui ?</p>' +
+        '<p class="slf-dim">Tu noteras ton max sur chaque exercice, et tes objectifs seront ajustés en conséquence.</p>' +
+        '<div style="width:100%;margin-top:14px;display:flex;flex-direction:column;gap:8px">' +
+          '<button class="slf-cta" data-action="reeval-answer" data-value="yes">Oui, réévalue-moi</button>' +
+          '<button class="slf-togglebtn" data-action="reeval-answer" data-value="no">Non, quête normale</button>' +
+        "</div>" +
+      "</div></div>"
+    );
+  }
+
+  function reevalInputRowTpl(key) {
+    var meta = EXO_META[key];
+    var val = ui.reevalValues[key];
+    return (
+      '<div class="slf-taskrow">' +
+        '<div class="slf-taskicon">' + icon(meta.icon, 18) + "</div>" +
+        '<div class="slf-taskinfo"><p class="slf-tasklabel">Max ' + esc(meta.label) + "</p></div>" +
+        '<input type="number" min="0" inputmode="numeric" class="slf-numinput" placeholder="' + (meta.unit === "s" ? "sec" : "reps") + '" data-action="reeval-set" data-key="' + key + '" value="' + (typeof val === "number" ? val : "") + '" />' +
+      "</div>"
+    );
+  }
+
+  function reevalFormTpl() {
+    var rows = Object.keys(EXO_META).map(reevalInputRowTpl).join("");
+    return (
+      '<div class="slf-window"><div class="slf-windowhead"><span class="slf-mono">◈ RÉÉVALUATION ◈</span></div>' +
+      '<div class="slf-windowbody">' +
+        '<p class="slf-redemptionnote" style="color:#ffe9b3;background:rgba(255,215,106,0.08);border-color:rgba(255,215,106,0.35)">Note le maximum de répétitions (ou de secondes pour le gainage) que tu peux vraiment faire, en une seule série.</p>' +
+        rows +
+        (ui.reevalError ? '<p class="slf-settingsnote danger">Renseigne un nombre supérieur à 0 pour chaque exercice.</p>' : "") +
+        '<button class="slf-cta" data-action="submit-reeval">Valider ma réévaluation</button>' +
+      "</div></div>"
+    );
+  }
+
   function questTpl() {
     var mode = getMode();
+
+    if (mode === "reeval-prompt") return reevalPromptTpl();
+    if (mode === "reeval") return reevalFormTpl();
+
     var targets = mode === "redemption" ? redemptionTargets(profile.targets) : profile.targets;
 
     if (mode === "done") {
+      var last = profile.history[0];
       var chips = Object.keys(EXO_META).map(function (k) {
         var meta = EXO_META[k];
         return '<div class="slf-targetchip">' + icon(meta.icon, 14) + '<span class="slf-mono">' + profile.targets[k] + esc(meta.unit) + '</span><span class="slf-dim">' + esc(meta.label) + "</span></div>";
       }).join("");
+      var doneMsg = "Séance validée pour aujourd'hui, Chasseur.";
+      var subMsg = "";
+      if (last) {
+        if (last.mode === "reeval") {
+          subMsg = "Nouveaux objectifs définis après réévaluation.";
+        } else {
+          var anyEasy = last.feedback && Object.keys(last.feedback).some(function (k) { return last.feedback[k] === "facile"; });
+          subMsg = anyEasy ? "Objectifs ajustés selon ton ressenti par exercice." : "Même intensité demain.";
+        }
+      }
       return (
         '<div class="slf-window"><div class="slf-windowhead"><span class="slf-mono">◈ QUÊTE ACCOMPLIE ◈</span></div>' +
         '<div class="slf-windowbody slf-donebody">' +
           icon("checkCircle", 40, { color: "#2fd7ff" }) +
-          '<p class="slf-donetext">Séance validée pour aujourd\'hui, Chasseur.</p>' +
-          '<p class="slf-dim">Jauge de niveau : ' + profile.gauge + '/3 (Répète 3x "Facile" pour Up)</p>' +
-          '<div class="slf-nexttargets"><p class="slf-mono slf-eyebrow">OBJECTIFS SEMAINE</p><div class="slf-targetrow">' + chips + "</div></div>" +
+          '<p class="slf-donetext">' + doneMsg + "</p>" +
+          (subMsg ? '<p class="slf-dim">' + subMsg + "</p>" : "") +
+          '<div class="slf-nexttargets"><p class="slf-mono slf-eyebrow">DEMAIN</p><div class="slf-targetrow">' + chips + "</div></div>" +
           rankProgressTpl() +
         "</div></div>"
-      );
-    }
-
-    if (mode === "testmax") {
-      var testRows = Object.keys(EXO_META).map(function (k) { return testMaxRowTpl(k); }).join("");
-      return (
-        '<div class="slf-window danger">' +
-          '<div class="slf-windowhead"><span class="slf-mono">◈ ÉPREUVE DU BOSS (TEST MAX) ◈</span></div>' +
-          '<div class="slf-windowbody">' +
-            '<p class="slf-redemptionnote" style="color:#2fd7ff;border-color:#2fd7ff;background:rgba(47,215,255,0.08)">C\'est le jour du Boss ! Réalise 1 seule série au maximum sur chaque exercice et inscris ton score ci-dessous.</p>' +
-            testRows +
-            '<button class="slf-cta" style="margin-top:12px;" data-action="open-feedback">Valider le Test Max</button>' +
-          "</div>" +
-        "</div>"
       );
     }
 
@@ -403,8 +464,7 @@
       '<div class="slf-window' + (isRedemption ? " danger" : "") + '">' +
         '<div class="slf-windowhead"><span class="slf-mono">' + (isRedemption ? "◈ QUÊTE DE RÉDEMPTION ◈" : "◈ QUÊTE QUOTIDIENNE ◈") + "</span></div>" +
         '<div class="slf-windowbody">' +
-          (isRedemption ? '<p class="slf-redemptionnote">Série brisée. Pénalité : +30% de reps. Complète cette quête pour relancer ton streak à 1.</p>' : "") +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><span class="slf-dim">Jauge d\'Évolution</span><span class="slf-mono" style="color:#2fd7ff">' + profile.gauge + '/3</span></div>' +
+          (isRedemption ? '<p class="slf-redemptionnote">Série brisée. Pénalité : +50% de reps. Complète cette quête pour continuer ta série.</p>' : "") +
           rows +
           '<div class="slf-progressbar"><div class="slf-progressfill" style="width:' + ((doneCount / 4) * 100) + '%"></div></div>' +
           '<button class="slf-cta" ' + (allChecked ? 'data-action="open-feedback"' : "disabled") + ">Terminer la séance</button>" +
@@ -416,15 +476,32 @@
   function historyTpl() {
     var rows = profile.history.map(function (h) {
       var rank = RANKS.find(function (r) { return r.name === h.rank; }) || RANKS[0];
+      var modePill = "";
+      if (h.mode === "redemption") modePill = '<span class="slf-pill danger">RÉDEMPTION</span>';
+      else if (h.mode === "reeval") modePill = '<span class="slf-pill reeval">RÉÉVALUATION</span>';
+
+      var rightIcons;
+      if (h.mode === "reeval") {
+        rightIcons = icon("trendingUp", 14, { color: "#ffd76a" });
+      } else if (h.feedback) {
+        rightIcons = Object.keys(EXO_META).map(function (k) {
+          var easy = h.feedback[k] === "facile";
+          return icon(easy ? "zap" : "wind", 12, { color: easy ? "#2fd7ff" : "#8b9fb5" });
+        }).join("");
+      } else {
+        rightIcons = "";
+      }
+
       return (
-        '<div class="slf-histrow">' +
-          '<div class="slf-histdate"><span class="slf-mono">' + esc(h.date.slice(5).replace("-", "/")) + "</span>" +
-            (h.mode === "redemption" ? '<span class="slf-pill danger">RÉDEMP</span>' : (h.mode === "testmax" ? '<span class="slf-pill" style="background:rgba(47,215,255,0.2);color:#2fd7ff;">BOSS</span>' : "")) +
+        '<div class="slf-histrow2">' +
+          '<div class="slf-histtop">' +
+            '<span class="slf-mono">' + esc(h.date.slice(5).replace("-", "/")) + "</span>" +
+            modePill +
+            '<span class="slf-rankpill" style="color:' + rank.glow + ";border-color:" + rank.glow + ';margin-left:auto">' + h.rank + "</span>" +
           "</div>" +
-          '<div class="slf-histexos"><span class="slf-mono slf-dim">' + h.pushups + "P · " + h.squats + "Sq · " + (h.legraises || h.abdos || 0) + "Rj · " + h.plank + "s</span></div>" +
-          '<div class="slf-histright">' +
-            icon(h.feedback === "facile" ? "zap" : (h.feedback === "boss" ? "crown" : "wind"), 16, { color: h.feedback === "facile" ? "#2fd7ff" : "#8b9fb5" }) +
-            '<span class="slf-rankpill" style="color:' + rank.glow + ";border-color:" + rank.glow + '">' + h.rank + "</span>" +
+          '<div class="slf-histbottom">' +
+            '<span class="slf-mono slf-dim">' + h.pushups + "P · " + h.squats + "Sq · " + h.abdos + "Ab · " + h.plank + "s</span>" +
+            '<div class="slf-histicons">' + rightIcons + "</div>" +
           "</div>" +
         "</div>"
       );
@@ -456,13 +533,25 @@
 
   function feedbackModalTpl() {
     if (!ui.showFeedback) return "";
+    var rows = Object.keys(EXO_META).map(function (k) {
+      var meta = EXO_META[k];
+      var choice = ui.feedbackChoice[k];
+      return (
+        '<div class="slf-fbrow">' +
+          '<div class="slf-fbrowlabel">' + icon(meta.icon, 16) + '<span>' + esc(meta.label) + "</span></div>" +
+          '<div class="slf-fbrowbtns">' +
+            '<button class="slf-fbtoggle easy' + (choice === "facile" ? " active" : "") + '" data-action="set-feedback" data-key="' + k + '" data-value="facile">' + icon("zap", 14) + "</button>" +
+            '<button class="slf-fbtoggle hard' + (choice === "essouffle" ? " active" : "") + '" data-action="set-feedback" data-key="' + k + '" data-value="essouffle">' + icon("wind", 14) + "</button>" +
+          "</div>" +
+        "</div>"
+      );
+    }).join("");
+    var complete = Object.keys(EXO_META).every(function (k) { return ui.feedbackChoice[k] !== null; });
     return (
       '<div class="slf-overlay" data-action="close-feedback"><div class="slf-modal" data-stop="1">' +
-        '<p class="slf-mono slf-eyebrow">FIN DE SÉANCE</p><h2 class="slf-modaltitle">Comment t\'es-tu senti ?</h2>' +
-        '<button class="slf-feedbackbtn easy" data-action="finish" data-feedback="facile">' + icon("zap", 20) +
-          '<div><p class="slf-fbtitle">Facile (+1 Jauge)</p><p class="slf-fbsub">Valide 3x pour monter en niveau</p></div></button>' +
-        '<button class="slf-feedbackbtn hard" data-action="finish" data-feedback="essouffle">' + icon("wind", 20) +
-          '<div><p class="slf-fbtitle">Essoufflé·e / Dur</p><p class="slf-fbsub">Conserve le niveau actuel</p></div></button>' +
+        '<p class="slf-mono slf-eyebrow">FIN DE SÉANCE</p><h2 class="slf-modaltitle">Comment t\'es-tu senti, exercice par exercice ?</h2>' +
+        rows +
+        '<button class="slf-cta" style="margin-top:14px" ' + (complete ? 'data-action="submit-feedback"' : "disabled") + ">Valider</button>" +
       "</div></div>"
     );
   }
@@ -475,12 +564,12 @@
       body = '<p class="slf-dim slf-settingsnote">Les notifications ne sont pas prises en charge dans ce navigateur.</p>';
     } else {
       body =
-        '<p class="slf-dim slf-settingsnote">Reçois un rappel si ta quête n\'est pas terminée à l\'heure choisie.</p>' +
+        '<p class="slf-dim slf-settingsnote">Reçois un rappel si ta quête n\'est pas terminée à l\'heure choisie. Fonctionne tant que cette page reste ouverte ou en arrière-plan sur ton téléphone.</p>' +
         '<div class="slf-settingrow"><span>Heure du rappel</span><input type="time" class="slf-timeinput" data-action="set-time" value="' + esc(profile.reminder.time) + '" /></div>';
       if (perm === "granted") {
         body += '<button class="slf-togglebtn' + (profile.reminder.enabled ? " on" : "") + '" data-action="toggle-reminder">' + icon(profile.reminder.enabled ? "bell" : "bellOff", 16) + (profile.reminder.enabled ? " Rappel activé" : " Rappel désactivé") + "</button>";
       } else if (perm === "denied") {
-        body += '<p class="slf-settingsnote danger">Notifications bloquées dans le navigateur.</p>';
+        body += '<p class="slf-settingsnote danger">Notifications bloquées. Autorise-les dans les réglages de ton navigateur pour ce site.</p>';
       } else {
         body += '<button class="slf-togglebtn" data-action="request-notif">' + icon("bell", 16) + " Autoriser les notifications</button>";
       }
@@ -499,7 +588,7 @@
   }
 
   function errorToastTpl() {
-    return ui.error ? '<div class="slf-errortoast slf-mono">Sauvegarde impossible.</div>' : "";
+    return ui.error ? '<div class="slf-errortoast slf-mono">Sauvegarde impossible — réessaie.</div>' : "";
   }
 
   // ---------- render ----------
@@ -541,8 +630,17 @@
       case "open-feedback":
         openFeedback();
         break;
-      case "finish":
-        finish(el.getAttribute("data-feedback"));
+      case "set-feedback":
+        setFeedback(el.getAttribute("data-key"), el.getAttribute("data-value"));
+        break;
+      case "submit-feedback":
+        finishSession();
+        break;
+      case "reeval-answer":
+        answerReeval(el.getAttribute("data-value"));
+        break;
+      case "submit-reeval":
+        submitReeval();
         break;
       case "open-settings":
         ui.showSettings = true;
@@ -560,15 +658,12 @@
         break;
     }
   });
-
   document.addEventListener("change", function (e) {
-    var action = e.target.getAttribute("data-action");
-    if (action === "set-time") {
+    if (e.target.getAttribute("data-action") === "set-time") {
       setReminderTime(e.target.value);
     }
-    if (action === "set-max") {
-      var key = e.target.getAttribute("data-key");
-      ui.testMaxInputs[key] = parseInt(e.target.value, 10) || 0;
+    if (e.target.getAttribute("data-action") === "reeval-set") {
+      setReevalValue(e.target.getAttribute("data-key"), e.target.value);
     }
   });
 
