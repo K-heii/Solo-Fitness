@@ -296,6 +296,8 @@ body {
   font-size: 13px;
 }
 .slf-togglebtn.on { color: var(--cyan); border-color: var(--cyan); background: rgba(47,215,255,0.1); }
+.slf-danger-btn { border-color: rgba(255,56,96,0.4); color: #ff8fa3; }
+.slf-danger-btn:hover { border-color: var(--danger); background: rgba(255,56,96,0.08); }
 
 .slf-feedbackbtn {
   width: 100%;

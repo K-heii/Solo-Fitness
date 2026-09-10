@@ -2,7 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
-  var APP_VERSION = "v3.0 — onboarding, bienvenue quotidienne, alerte rédemption, export/import";
+  var APP_VERSION = "v3.1 — icône réglages, notifications retirées, réinitialisation";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -81,8 +81,6 @@
       lastWelcomeDate: null,
       targets: Object.assign({}, DEFAULT_TARGETS),
       history: [],
-      reminder: { enabled: false, time: "18:00" },
-      lastNotifiedDate: null,
       fx: { enabled: true },
     };
   }
@@ -100,8 +98,7 @@
     timer: '<circle cx="12" cy="13" r="8" fill="none"/><line x1="12" y1="13" x2="12" y2="9"/><line x1="9" y1="2" x2="15" y2="2"/>',
     hexagon: '<polygon points="12,2 21,7 21,17 12,22 3,17 3,7" fill="none"/>',
     flame: '<path d="M12 3c2.2 3 5 4.7 5 9a5 5 0 1 1-10 0c0-1.8.9-2.9 1.8-3.8-.3 1.8.6 2.6 1.1 1.8-.6-2.7.6-4.6 2.1-7z" fill="currentColor" stroke="none"/>',
-    bell: '<path d="M6 10a6 6 0 0 1 12 0c0 4 1.5 5.5 2 6H4c.5-.5 2-2 2-6z" fill="none"/><path d="M9.5 19a2.5 2.5 0 0 0 5 0" fill="none"/>',
-    bellOff: '<path d="M6 10a6 6 0 0 1 12 0c0 4 1.5 5.5 2 6H4c.5-.5 2-2 2-6z" fill="none"/><path d="M9.5 19a2.5 2.5 0 0 0 5 0" fill="none"/><line x1="3" y1="3" x2="21" y2="21"/>',
+    gear: '<circle cx="12" cy="12" r="7.2" fill="none"/><circle cx="12" cy="12" r="2.4" fill="none"/><line x1="19.2" y1="12" x2="22.2" y2="12"/><line x1="17.1" y1="17.1" x2="19.2" y2="19.2"/><line x1="12" y1="19.2" x2="12" y2="22.2"/><line x1="6.9" y1="17.1" x2="4.8" y2="19.2"/><line x1="4.8" y1="12" x2="1.8" y2="12"/><line x1="6.9" y1="6.9" x2="4.8" y2="4.8"/><line x1="12" y1="4.8" x2="12" y2="1.8"/><line x1="17.1" y1="6.9" x2="19.2" y2="4.8"/>',
     x: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>',
     checkCircle: '<circle cx="12" cy="12" r="9" fill="none"/><polyline points="8,12.5 11,15.5 16,9" fill="none"/>',
     circle: '<circle cx="12" cy="12" r="9" fill="none"/>',
@@ -147,7 +144,6 @@
     onboardCustomError: false,
     rankUpFlash: null,
     error: false,
-    notifPermission: "Notification" in window ? Notification.permission : "unsupported",
   };
 
   function loadProfile() {
@@ -157,7 +153,6 @@
       var def = defaultProfile();
       var merged = Object.assign({}, def, loaded, {
         targets: Object.assign({}, DEFAULT_TARGETS, loaded.targets),
-        reminder: Object.assign({}, def.reminder, loaded.reminder),
         fx: Object.assign({}, def.fx, loaded.fx),
       });
       // migration silencieuse : un profil qui a déjà de la donnée (créé avant l'onboarding)
@@ -404,45 +399,6 @@
     }, 3200);
   }
 
-  // ---------- réglages : rappel ----------
-  function setReminderTime(t) {
-    saveProfile(Object.assign({}, profile, { reminder: Object.assign({}, profile.reminder, { time: t }) }));
-  }
-  function toggleReminder() {
-    saveProfile(Object.assign({}, profile, { reminder: Object.assign({}, profile.reminder, { enabled: !profile.reminder.enabled }) }));
-  }
-  function requestNotifPermission() {
-    if (!("Notification" in window)) return;
-    Notification.requestPermission().then(function (perm) {
-      ui.notifPermission = perm;
-      if (perm === "granted") {
-        saveProfile(Object.assign({}, profile, { reminder: Object.assign({}, profile.reminder, { enabled: true }) }));
-      } else {
-        render();
-      }
-    });
-  }
-  function checkReminder() {
-    if (!profile.reminder || !profile.reminder.enabled) return;
-    if (!("Notification" in window) || Notification.permission !== "granted") return;
-    var now = new Date();
-    var nowTime = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
-    var today = todayStr();
-    var alreadyDone = profile.lastCompletedDate === today;
-    var alreadyNotified = profile.lastNotifiedDate === today;
-    if (!alreadyDone && !alreadyNotified && nowTime >= profile.reminder.time) {
-      try {
-        new Notification("Quête en attente, " + pseudo(), {
-          body: "Ta quête quotidienne n'est pas terminée. Ne brise pas ta série.",
-          icon: "icon-192.png",
-          vibrate: profile.fx && profile.fx.enabled ? [30, 80, 30] : undefined,
-        });
-      } catch (e) { /* ignore */ }
-      saveProfile(Object.assign({}, profile, { lastNotifiedDate: today }));
-    }
-  }
-  setInterval(checkReminder, 30000);
-
   // ---------- son & vibration ----------
   var audioCtx = null;
   function getAudioCtx() {
@@ -531,7 +487,6 @@
       var def = defaultProfile();
       var merged = Object.assign({}, def, data, {
         targets: Object.assign({}, DEFAULT_TARGETS, data.targets),
-        reminder: Object.assign({}, def.reminder, data.reminder),
         fx: Object.assign({}, def.fx, data.fx),
       });
       ui.showSettings = false;
@@ -539,6 +494,28 @@
       alert("Import réussi. Bon retour, " + (merged.pseudo || "Chasseur") + ".");
     };
     reader.readAsText(file);
+  }
+  function resetApp() {
+    if (!window.confirm(pseudo() + ", ceci va effacer définitivement toute ta progression (streak, historique, objectifs). Cette action est irréversible. Continuer ?")) return;
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+    profile = defaultProfile();
+    ui.view = "quest";
+    ui.checked = { pushups: false, squats: false, abdos: false, plank: false };
+    ui.showFeedback = false;
+    ui.showSettings = false;
+    ui.feedbackChoice = { pushups: null, squats: null, abdos: null, plank: null };
+    ui.reevalAnswered = { date: null, answer: null };
+    ui.reevalValues = {};
+    ui.reevalError = false;
+    ui.redemptionAck = false;
+    ui.onboardStep = 1;
+    ui.onboardMode = "choose";
+    ui.onboardName = "";
+    ui.onboardCustom = {};
+    ui.onboardCustomError = false;
+    ui.rankUpFlash = null;
+    ui.error = false;
+    render();
   }
 
   // ---------- templates : onboarding ----------
@@ -615,7 +592,6 @@
   function headerTpl() {
     var today = todayStr();
     var rank = getRank(profile.streak);
-    var bellActive = profile.reminder.enabled && ui.notifPermission === "granted";
     return (
       '<header class="slf-header">' +
         '<div class="slf-rankbadge" style="--glow:' + rank.glow + '">' + icon("hexagon", 40) + '<span class="slf-rankletter">' + rank.name + "</span></div>" +
@@ -625,8 +601,8 @@
         "</div>" +
         '<div class="slf-headerright">' +
           '<div class="slf-datebadge slf-mono">' + esc(today.slice(5).replace("-", "/")) + "</div>" +
-          '<button class="slf-bellbtn' + (bellActive ? " active" : "") + '" data-action="open-settings" aria-label="Réglages">' +
-            icon(bellActive ? "bell" : "bellOff", 16) +
+          '<button class="slf-bellbtn" data-action="open-settings" aria-label="Réglages">' +
+            icon("gear", 16) +
           "</button>" +
         "</div>" +
       "</header>"
@@ -836,32 +812,12 @@
   }
 
   function settingsModalTpl() {
-    var perm = ui.notifPermission;
-    var body = "";
-    if (perm === "unsupported") {
-      body = '<p class="slf-dim slf-settingsnote">Les notifications ne sont pas prises en charge dans ce navigateur.</p>';
-    } else {
-      body =
-        '<p class="slf-dim slf-settingsnote">Reçois un rappel si ta quête n\'est pas terminée à l\'heure choisie. Fonctionne tant que cette page reste ouverte ou en arrière-plan sur ton téléphone.</p>' +
-        '<div class="slf-settingrow"><span>Heure du rappel</span><input type="time" class="slf-timeinput" data-action="set-time" value="' + esc(profile.reminder.time) + '" /></div>';
-      if (perm === "granted") {
-        body += '<button class="slf-togglebtn' + (profile.reminder.enabled ? " on" : "") + '" data-action="toggle-reminder">' + icon(profile.reminder.enabled ? "bell" : "bellOff", 16) + (profile.reminder.enabled ? " Rappel activé" : " Rappel désactivé") + "</button>";
-      } else if (perm === "denied") {
-        body += '<p class="slf-settingsnote danger">Notifications bloquées. Autorise-les dans les réglages de ton navigateur pour ce site.</p>';
-      } else {
-        body += '<button class="slf-togglebtn" data-action="request-notif">' + icon("bell", 16) + " Autoriser les notifications</button>";
-      }
-    }
     return (
       '<div class="slf-overlay" data-action="close-settings"><div class="slf-modal" data-stop="1">' +
         '<div class="slf-modalheadrow"><p class="slf-mono slf-eyebrow">RÉGLAGES</p><button class="slf-closebtn" data-action="close-settings">' + icon("x", 16) + "</button></div>" +
 
-        '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">RAPPEL QUOTIDIEN</p>' +
-        body +
-
-        '<div class="slf-settingsdivider"></div>' +
         '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">SON & VIBRATION</p>' +
-        '<p class="slf-dim slf-settingsnote">Retour sonore/haptique quand tu coches un exercice, valides une séance, montes de rang ou reçois un rappel.</p>' +
+        '<p class="slf-dim slf-settingsnote">Retour sonore/haptique quand tu coches un exercice, valides une séance ou montes de rang.</p>' +
         '<button class="slf-togglebtn' + (profile.fx.enabled ? " on" : "") + '" data-action="toggle-fx">' +
           icon(profile.fx.enabled ? "volume" : "volumeOff", 16) +
           (profile.fx.enabled ? " Activés" : " Désactivés") +
@@ -875,6 +831,11 @@
           '<button class="slf-togglebtn" style="flex:1" data-action="trigger-import">' + icon("upload", 16) + " Importer</button>" +
         "</div>" +
         '<input type="file" accept="application/json" id="slf-import-input" data-action="import-file" style="display:none" />' +
+
+        '<div class="slf-settingsdivider"></div>' +
+        '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px;color:var(--danger)">ZONE DANGER</p>' +
+        '<p class="slf-dim slf-settingsnote">Efface streak, historique, objectifs et pseudo. Repart de zéro, comme une première installation.</p>' +
+        '<button class="slf-togglebtn slf-danger-btn" data-action="reset-app">' + icon("alert", 16) + " Réinitialiser l'application</button>" +
 
         '<p class="slf-versiontag slf-mono">' + esc(APP_VERSION) + "</p>" +
       "</div></div>"
@@ -956,14 +917,8 @@
         ui.showSettings = false;
         render();
         break;
-      case "toggle-reminder":
-        toggleReminder();
-        break;
       case "toggle-fx":
         toggleFx();
-        break;
-      case "request-notif":
-        requestNotifPermission();
         break;
       case "export-data":
         exportData();
@@ -971,6 +926,9 @@
       case "trigger-import":
         var fi = document.getElementById("slf-import-input");
         if (fi) fi.click();
+        break;
+      case "reset-app":
+        resetApp();
         break;
       case "onboard-name-next":
         onboardNameNext();
@@ -994,7 +952,6 @@
   });
   document.addEventListener("change", function (e) {
     var action = e.target.getAttribute("data-action");
-    if (action === "set-time") setReminderTime(e.target.value);
     if (action === "reeval-set") setReevalValue(e.target.getAttribute("data-key"), e.target.value);
     if (action === "set-onboard-name") setOnboardName(e.target.value);
     if (action === "onboard-custom-set") setOnboardCustom(e.target.getAttribute("data-key"), e.target.value);
