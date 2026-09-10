@@ -416,12 +416,17 @@ body {
 .slf-fbrowlabel { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--cyan); }
 .slf-fbrowbtns { display: flex; gap: 6px; }
 .slf-fbtoggle {
-  width: 34px; height: 30px;
-  display: flex; align-items: center; justify-content: center;
+  min-width: 78px;
+  height: 34px;
+  padding: 0 10px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
   border: 1px solid var(--cyan-dim);
   border-radius: 5px;
   background: none;
   color: var(--dim);
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
 .slf-fbtoggle.easy.active { color: var(--cyan); border-color: var(--cyan); background: rgba(47,215,255,0.12); }
@@ -448,6 +453,43 @@ body {
   font-size: 10px;
   color: var(--dim);
   text-align: center;
+}
+.slf-settingsdivider {
+  height: 1px;
+  background: var(--cyan-dim);
+  margin: 16px 0 14px;
+}
+
+.slf-textinput {
+  width: 100%;
+  background: var(--void);
+  border: 1px solid var(--cyan-dim);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 11px 12px;
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 14px;
+}
+.slf-textinput:focus { border-color: var(--cyan); outline: none; }
+
+.slf-diffcard {
+  width: 100%;
+  display: block;
+  text-align: left;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--cyan-dim);
+  background: rgba(47,215,255,0.03);
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+}
+.slf-diffcard:hover, .slf-diffcard.active { border-color: var(--cyan); background: rgba(47,215,255,0.08); }
+
+.slf-modal-danger {
+  border-color: var(--danger) !important;
+  box-shadow: 0 0 30px rgba(255,56,96,0.25) !important;
 }
 
 button { -webkit-tap-highlight-color: transparent; }
