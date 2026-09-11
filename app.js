@@ -2,7 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
-  var APP_VERSION = "v3.1 — icône réglages, notifications retirées, réinitialisation";
+  var APP_VERSION = "v3.2 — alerte de série définitivement brisée (streak → 0)";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -137,6 +137,7 @@
     reevalValues: {},
     reevalError: false,
     redemptionAck: false,
+    justBroken: false,
     onboardStep: 1,
     onboardMode: "choose",
     onboardName: "",
@@ -188,15 +189,30 @@
     if (reevalToday === "yes") return "reeval";
     if (profile.lastCompletedDate) {
       var diff = daysBetween(profile.lastCompletedDate, today);
-      if (diff > 1) return "redemption";
+      if (diff === 2) return "redemption";
     }
     return "normal";
   }
   function shouldShowWelcome() {
     return profile.onboarded && profile.lastWelcomeDate !== todayStr();
   }
+  // Si la quête de rédemption elle-même n'a pas été faite à temps (2 jours pleins ratés
+  // après la dernière séance), la série est définitivement perdue : on la remet à 0.
+  function checkAndApplyStreakBreak() {
+    var today = todayStr();
+    if (!profile.lastCompletedDate) return false;
+    if (profile.streak <= 0) return false;
+    var diff = daysBetween(profile.lastCompletedDate, today);
+    if (diff >= 3) {
+      profile = Object.assign({}, profile, { streak: 0 });
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(profile)); } catch (e) { /* ignore */ }
+      return true;
+    }
+    return false;
+  }
   function getActiveOverlay() {
     if (!profile.onboarded) return "onboarding";
+    if (ui.justBroken) return "streak-broken";
     if (shouldShowWelcome()) return "welcome";
     if (getMode() === "redemption" && !ui.redemptionAck) return "redemption-penalty";
     if (ui.showFeedback) return "feedback";
@@ -264,6 +280,10 @@
   }
   function ackRedemption() {
     ui.redemptionAck = true;
+    render();
+  }
+  function ackBroken() {
+    ui.justBroken = false;
     render();
   }
 
@@ -588,6 +608,17 @@
     );
   }
 
+  function streakBrokenTpl() {
+    return (
+      '<div class="slf-overlay"><div class="slf-modal slf-modal-danger" data-stop="1">' +
+        '<p class="slf-mono slf-eyebrow" style="color:var(--danger)">' + icon("alert", 13, { color: "var(--danger)" }) + " ◈ SÉRIE PERDUE ◈</p>" +
+        '<h2 class="slf-modaltitle">' + esc(pseudo()) + ", ta série est brisée."  + "</h2>" +
+        '<p class="slf-dim" style="margin-bottom:16px">Le délai de rédemption est passé. Ton compteur repart de zéro — mais chaque grand chasseur a connu une chute. Relève-toi.</p>' +
+        '<button class="slf-cta" data-action="ack-broken">Je me relève</button>' +
+      "</div></div>"
+    );
+  }
+
   // ---------- templates : quête ----------
   function headerTpl() {
     var today = todayStr();
@@ -857,6 +888,7 @@
     var overlay = getActiveOverlay();
     var overlayHtml = "";
     if (overlay === "onboarding") overlayHtml = onboardingTpl();
+    else if (overlay === "streak-broken") overlayHtml = streakBrokenTpl();
     else if (overlay === "welcome") overlayHtml = welcomeModalTpl();
     else if (overlay === "redemption-penalty") overlayHtml = redemptionPenaltyTpl();
     else if (overlay === "feedback") overlayHtml = feedbackModalTpl();
@@ -948,6 +980,9 @@
       case "ack-redemption":
         ackRedemption();
         break;
+      case "ack-broken":
+        ackBroken();
+        break;
     }
   });
   document.addEventListener("change", function (e) {
@@ -958,5 +993,6 @@
     if (action === "import-file") handleImportFile(e.target.files[0]);
   });
 
+  ui.justBroken = checkAndApplyStreakBreak();
   render();
 })();
