@@ -394,6 +394,7 @@ body {
 }
 .slf-pill.danger { background: rgba(255,56,96,0.15); color: #ff3860; }
 .slf-pill.reeval { background: rgba(255,215,106,0.15); color: #ffd76a; }
+.slf-pill.joker { background: rgba(157,179,201,0.15); color: #9db3c9; }
 
 .slf-numinput {
   width: 64px;

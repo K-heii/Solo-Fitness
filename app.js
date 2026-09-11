@@ -2,7 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
-  var APP_VERSION = "v3.2 — alerte de série définitivement brisée (streak → 0)";
+  var APP_VERSION = "v3.4 — bouton d'installation PWA, joker jour de repos (1/semaine)";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -81,6 +81,7 @@
       lastWelcomeDate: null,
       targets: Object.assign({}, DEFAULT_TARGETS),
       history: [],
+      lastJokerDate: null,
       fx: { enabled: true },
     };
   }
@@ -112,6 +113,8 @@
     download: '<path d="M12 3v12" fill="none"/><polyline points="7,10 12,15 17,10" fill="none"/><path d="M4 19h16" fill="none"/>',
     upload: '<path d="M12 15V3" fill="none"/><polyline points="7,8 12,3 17,8" fill="none"/><path d="M4 19h16" fill="none"/>',
     alert: '<polygon points="12,3 22,20 2,20" fill="none"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/>',
+    moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="none"/>',
+    download2: '<rect x="3" y="16" width="18" height="4" rx="1" fill="none"/><path d="M12 3v10" fill="none"/><polyline points="8,10 12,14 16,10" fill="none"/>',
   };
   function icon(name, size, opts) {
     opts = opts || {};
@@ -145,6 +148,7 @@
     onboardCustomError: false,
     rankUpFlash: null,
     error: false,
+    installAvailable: false,
   };
 
   function loadProfile() {
@@ -286,6 +290,10 @@
     ui.justBroken = false;
     render();
   }
+  function savePseudo(raw) {
+    var name = raw && raw.trim() ? raw.trim().slice(0, 20) : "Chasseur";
+    saveProfile(Object.assign({}, profile, { pseudo: name }));
+  }
 
   // ---------- actions : quête ----------
   function toggleTask(key) {
@@ -417,6 +425,68 @@
       ui.rankUpFlash = null;
       render();
     }, 3200);
+  }
+
+  // ---------- joker : jour de repos ----------
+  function jokerDaysLeft() {
+    if (!profile.lastJokerDate) return 0;
+    var diff = daysBetween(profile.lastJokerDate, todayStr());
+    return Math.max(0, 7 - diff);
+  }
+  function jokerAvailable() {
+    return jokerDaysLeft() === 0;
+  }
+  function useJoker() {
+    if (!jokerAvailable()) return;
+    if (!window.confirm(pseudo() + ", utiliser ton joker aujourd'hui compte comme une séance réussie sans exercice. Tu ne pourras en reprendre un que dans 7 jours. Confirmer ?")) return;
+    var today = todayStr();
+    var wasRank = getRank(profile.streak).name;
+    var newStreak = profile.streak + 1;
+    var newBest = Math.max(profile.best, newStreak);
+    var entry = {
+      date: today,
+      mode: "joker",
+      pushups: 0,
+      squats: 0,
+      abdos: 0,
+      plank: 0,
+      feedback: null,
+      rank: getRank(newStreak).name,
+    };
+    var next = Object.assign({}, profile, {
+      streak: newStreak,
+      best: newBest,
+      lastCompletedDate: today,
+      lastJokerDate: today,
+      history: [entry].concat(profile.history),
+    });
+    var newRank = getRank(newStreak).name;
+    saveProfile(next);
+    fxValidate();
+    flashRankUp(wasRank, newRank);
+  }
+
+  // ---------- installation PWA ----------
+  var deferredInstallPrompt = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    ui.installAvailable = true;
+    render();
+  });
+  window.addEventListener("appinstalled", function () {
+    deferredInstallPrompt = null;
+    ui.installAvailable = false;
+    render();
+  });
+  function installApp() {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    deferredInstallPrompt.userChoice.then(function () {
+      deferredInstallPrompt = null;
+      ui.installAvailable = false;
+      render();
+    });
   }
 
   // ---------- son & vibration ----------
@@ -586,37 +656,53 @@
     );
   }
 
+  function hashStr(s) {
+    var h = 0;
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  }
+  function pickVariant(arr, seed) {
+    return arr[hashStr(seed) % arr.length];
+  }
+  function messageModalTpl(variant, actionAttr, danger) {
+    return (
+      '<div class="slf-overlay"><div class="slf-modal' + (danger ? " slf-modal-danger" : "") + '" data-stop="1">' +
+        '<p class="slf-mono slf-eyebrow"' + (danger ? ' style="color:var(--danger)"' : "") + '>' + (danger ? icon("alert", 13, { color: "var(--danger)" }) + " " : "") + variant.eyebrow + "</p>" +
+        '<h2 class="slf-modaltitle">' + variant.title.replace("{p}", esc(pseudo())) + "</h2>" +
+        '<p class="slf-dim" style="margin-bottom:16px">' + variant.body.replace("{p}", esc(pseudo())) + "</p>" +
+        '<button class="slf-cta" data-action="' + actionAttr + '">' + variant.cta + "</button>" +
+      "</div></div>"
+    );
+  }
+
+  var WELCOME_VARIANTS = [
+    { eyebrow: "◈ CONNEXION ÉTABLIE ◈", title: "Bon retour, {p}.", body: "Le Système t'attendait. Prêt pour les quêtes du jour ?", cta: "Entrer" },
+    { eyebrow: "◈ SYSTÈME ACTIF ◈", title: "{p} a rejoint le donjon.", body: "Une nouvelle journée d'ascension commence. Le Système observe.", cta: "Commencer" },
+    { eyebrow: "◈ ÉVEIL QUOTIDIEN ◈", title: "Le Système te salue, {p}.", body: "Chaque jour est une chance de monter en rang. Ne la gaspille pas.", cta: "J'y vais" },
+    { eyebrow: "◈ NOUVELLE JOURNÉE ◈", title: "{p}, ton donjon quotidien t'attend.", body: "Les faibles restent chez eux. Les chasseurs répondent à l'appel.", cta: "Répondre à l'appel" },
+    { eyebrow: "◈ CONNEXION ◈", title: "Ravi de te revoir, {p}.", body: "Ta légende ne s'écrit pas seule. Aujourd'hui, un chapitre de plus.", cta: "Continuer" },
+  ];
+  var REDEMPTION_VARIANTS = [
+    { eyebrow: "◈ ALERTE SYSTÈME ◈", title: "{p}, ta série a été brisée.", body: "Mais rien n'est perdu : réussis la quête de rédemption et ta légende continue.", cta: "J'affronte la rédemption" },
+    { eyebrow: "◈ DERNIÈRE CHANCE ◈", title: "{p}, le Système t'accorde un sursis.", body: "Un jour a été manqué. Complète la quête de rédemption maintenant, ou tout sera perdu demain.", cta: "Je saisis ma chance" },
+    { eyebrow: "◈ AVERTISSEMENT ◈", title: "Ta série vacille, {p}.", body: "Ce n'est pas encore fini. Une quête de rédemption t'attend — relève-toi avant qu'il ne soit trop tard.", cta: "Je me relève" },
+    { eyebrow: "◈ ÉPREUVE ◈", title: "{p}, le Système te teste.", body: "Une faille est apparue dans ta série. Referme-la aujourd'hui, ou elle s'effondrera.", cta: "Refermer la faille" },
+  ];
+  var BROKEN_VARIANTS = [
+    { eyebrow: "◈ SÉRIE PERDUE ◈", title: "{p}, ta série est brisée.", body: "Le délai de rédemption est passé. Ton compteur repart de zéro — mais chaque grand chasseur a connu une chute. Relève-toi.", cta: "Je me relève" },
+    { eyebrow: "◈ CHUTE ◈", title: "{p}, la série s'est effondrée.", body: "Le Système efface le compteur. Ce n'est pas la fin de ton ascension — seulement un nouveau départ.", cta: "Je recommence" },
+    { eyebrow: "◈ RÉINITIALISATION ◈", title: "{p}, ton compteur repart à zéro.", body: "Même les plus grands chasseurs rechutent. Ce qui compte, c'est de te relever aujourd'hui.", cta: "Debout, Chasseur" },
+    { eyebrow: "◈ ÉCHEC DE LA RÉDEMPTION ◈", title: "{p}, la fenêtre s'est refermée.", body: "Ta série est tombée à zéro. Le Système ne juge pas les chutes — seulement ceux qui restent à terre.", cta: "Je me relève" },
+  ];
+
   function welcomeModalTpl() {
-    return (
-      '<div class="slf-overlay"><div class="slf-modal" data-stop="1">' +
-        '<p class="slf-mono slf-eyebrow">◈ CONNEXION ÉTABLIE ◈</p>' +
-        '<h2 class="slf-modaltitle">Bon retour, ' + esc(pseudo()) + ".</h2>" +
-        '<p class="slf-dim" style="margin-bottom:16px">Le Système t\'attendait. Prêt pour les quêtes du jour ?</p>' +
-        '<button class="slf-cta" data-action="dismiss-welcome">Entrer</button>' +
-      "</div></div>"
-    );
+    return messageModalTpl(pickVariant(WELCOME_VARIANTS, "welcome-" + todayStr()), "dismiss-welcome", false);
   }
-
   function redemptionPenaltyTpl() {
-    return (
-      '<div class="slf-overlay"><div class="slf-modal slf-modal-danger" data-stop="1">' +
-        '<p class="slf-mono slf-eyebrow" style="color:var(--danger)">' + icon("alert", 13, { color: "var(--danger)" }) + " ◈ ALERTE SYSTÈME ◈</p>" +
-        '<h2 class="slf-modaltitle">' + esc(pseudo()) + ", ta série a été brisée.</h2>" +
-        '<p class="slf-dim" style="margin-bottom:16px">Mais rien n\'est perdu : réussis la quête de rédemption et ta légende continue.</p>' +
-        '<button class="slf-cta" data-action="ack-redemption">J\'affronte la rédemption</button>' +
-      "</div></div>"
-    );
+    return messageModalTpl(pickVariant(REDEMPTION_VARIANTS, "redemption-" + todayStr()), "ack-redemption", true);
   }
-
   function streakBrokenTpl() {
-    return (
-      '<div class="slf-overlay"><div class="slf-modal slf-modal-danger" data-stop="1">' +
-        '<p class="slf-mono slf-eyebrow" style="color:var(--danger)">' + icon("alert", 13, { color: "var(--danger)" }) + " ◈ SÉRIE PERDUE ◈</p>" +
-        '<h2 class="slf-modaltitle">' + esc(pseudo()) + ", ta série est brisée."  + "</h2>" +
-        '<p class="slf-dim" style="margin-bottom:16px">Le délai de rédemption est passé. Ton compteur repart de zéro — mais chaque grand chasseur a connu une chute. Relève-toi.</p>' +
-        '<button class="slf-cta" data-action="ack-broken">Je me relève</button>' +
-      "</div></div>"
-    );
+    return messageModalTpl(pickVariant(BROKEN_VARIANTS, "broken-" + todayStr()), "ack-broken", true);
   }
 
   // ---------- templates : quête ----------
@@ -724,6 +810,8 @@
       if (last) {
         if (last.mode === "reeval") {
           subMsg = "Nouveaux objectifs définis après réévaluation.";
+        } else if (last.mode === "joker") {
+          subMsg = "Jour de repos utilisé. Objectifs inchangés pour demain.";
         } else {
           var anyEasy = last.feedback && Object.keys(last.feedback).some(function (k) { return last.feedback[k] === "facile"; });
           subMsg = anyEasy ? "Objectifs ajustés selon ton ressenti par exercice." : "Même intensité demain.";
@@ -746,6 +834,15 @@
     var doneCount = Object.keys(ui.checked).filter(function (k) { return ui.checked[k]; }).length;
     var allChecked = doneCount === Object.keys(ui.checked).length;
 
+    var jokerBlock = "";
+    if (!isRedemption) {
+      if (jokerAvailable()) {
+        jokerBlock = '<button class="slf-togglebtn" style="margin-top:8px" data-action="use-joker">' + icon("moon", 16) + " Utiliser mon joker (jour de repos)</button>";
+      } else {
+        jokerBlock = '<p class="slf-dim" style="text-align:center;margin-top:10px">Joker disponible dans ' + jokerDaysLeft() + "j</p>";
+      }
+    }
+
     return (
       '<div class="slf-window' + (isRedemption ? " danger" : "") + '">' +
         '<div class="slf-windowhead"><span class="slf-mono">' + (isRedemption ? "◈ QUÊTE DE RÉDEMPTION ◈" : "◈ QUÊTE QUOTIDIENNE ◈") + "</span></div>" +
@@ -754,6 +851,7 @@
           rows +
           '<div class="slf-progressbar"><div class="slf-progressfill" style="width:' + ((doneCount / 4) * 100) + '%"></div></div>' +
           '<button class="slf-cta" ' + (allChecked ? 'data-action="open-feedback"' : "disabled") + ">Terminer la séance</button>" +
+          jokerBlock +
         "</div>" +
       "</div>"
     );
@@ -765,10 +863,13 @@
       var modePill = "";
       if (h.mode === "redemption") modePill = '<span class="slf-pill danger">RÉDEMPTION</span>';
       else if (h.mode === "reeval") modePill = '<span class="slf-pill reeval">RÉÉVALUATION</span>';
+      else if (h.mode === "joker") modePill = '<span class="slf-pill joker">REPOS</span>';
 
       var rightIcons;
       if (h.mode === "reeval") {
         rightIcons = icon("trendingUp", 14, { color: "#ffd76a" });
+      } else if (h.mode === "joker") {
+        rightIcons = icon("moon", 14, { color: "#9db3c9" });
       } else if (h.feedback) {
         rightIcons = Object.keys(EXO_META).map(function (k) {
           var easy = h.feedback[k] === "facile";
@@ -778,6 +879,8 @@
         rightIcons = "";
       }
 
+      var exoLine = h.mode === "joker" ? "Jour de repos (joker)" : h.pushups + "P · " + h.squats + "Sq · " + h.abdos + "Ab · " + h.plank + "s";
+
       return (
         '<div class="slf-histrow2">' +
           '<div class="slf-histtop">' +
@@ -786,7 +889,7 @@
             '<span class="slf-rankpill" style="color:' + rank.glow + ";border-color:" + rank.glow + ';margin-left:auto">' + h.rank + "</span>" +
           "</div>" +
           '<div class="slf-histbottom">' +
-            '<span class="slf-mono slf-dim">' + h.pushups + "P · " + h.squats + "Sq · " + h.abdos + "Ab · " + h.plank + "s</span>" +
+            '<span class="slf-mono slf-dim">' + exoLine + "</span>" +
             '<div class="slf-histicons">' + rightIcons + "</div>" +
           "</div>" +
         "</div>"
@@ -843,10 +946,25 @@
   }
 
   function settingsModalTpl() {
+    var installBlock = "";
+    if (ui.installAvailable) {
+      installBlock =
+        '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">INSTALLATION</p>' +
+        '<p class="slf-dim slf-settingsnote">Installe l\'app sur cet appareil pour l\'ouvrir comme une vraie application, en plein écran.</p>' +
+        '<button class="slf-togglebtn on" data-action="install-app">' + icon("download2", 16) + " Installer l'application</button>" +
+        '<div class="slf-settingsdivider"></div>';
+    }
     return (
       '<div class="slf-overlay" data-action="close-settings"><div class="slf-modal" data-stop="1">' +
         '<div class="slf-modalheadrow"><p class="slf-mono slf-eyebrow">RÉGLAGES</p><button class="slf-closebtn" data-action="close-settings">' + icon("x", 16) + "</button></div>" +
 
+        installBlock +
+
+        '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">PROFIL</p>' +
+        '<input type="text" maxlength="20" id="slf-pseudo-input" class="slf-textinput" placeholder="Ton pseudo" value="' + esc(profile.pseudo) + '" />' +
+        '<button class="slf-togglebtn" style="margin-top:8px" data-action="save-pseudo">Enregistrer le pseudo</button>' +
+
+        '<div class="slf-settingsdivider"></div>' +
         '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">SON & VIBRATION</p>' +
         '<p class="slf-dim slf-settingsnote">Retour sonore/haptique quand tu coches un exercice, valides une séance ou montes de rang.</p>' +
         '<button class="slf-togglebtn' + (profile.fx.enabled ? " on" : "") + '" data-action="toggle-fx">' +
@@ -935,6 +1053,12 @@
       case "submit-feedback":
         finishSession();
         break;
+      case "use-joker":
+        useJoker();
+        break;
+      case "install-app":
+        installApp();
+        break;
       case "reeval-answer":
         answerReeval(el.getAttribute("data-value"));
         break;
@@ -958,6 +1082,10 @@
       case "trigger-import":
         var fi = document.getElementById("slf-import-input");
         if (fi) fi.click();
+        break;
+      case "save-pseudo":
+        var pInput = document.getElementById("slf-pseudo-input");
+        savePseudo(pInput ? pInput.value : "");
         break;
       case "reset-app":
         resetApp();
