@@ -2,7 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
-  var APP_VERSION = "v3.4 — bouton d'installation PWA, joker jour de repos (1/semaine)";
+  var APP_VERSION = "v3.6 — thèmes de couleur, heatmap 30 jours, surbrillance pseudo";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -18,6 +18,12 @@
     tranquille: { pushups: 10, squats: 10, abdos: 10, plank: 30 },
     normal: { pushups: 20, squats: 20, abdos: 20, plank: 60 },
   };
+  var THEMES = [
+    { key: "blue", label: "Bleu", color: "#2fd7ff" },
+    { key: "yellow", label: "Jaune", color: "#ffcc33" },
+    { key: "green", label: "Vert", color: "#2ee6a8" },
+    { key: "red", label: "Rouge bordeaux", color: "#d9486e" },
+  ];
   var CAPS = { pushups: 60, squats: 60, abdos: 80, plank: 120 };
   var STEP = { pushups: 2, squats: 2, abdos: 3, plank: 5 };
   var REDEMPTION_MULT = 1.5;
@@ -82,6 +88,7 @@
       targets: Object.assign({}, DEFAULT_TARGETS),
       history: [],
       lastJokerDate: null,
+      theme: "blue",
       fx: { enabled: true },
     };
   }
@@ -115,6 +122,7 @@
     alert: '<polygon points="12,3 22,20 2,20" fill="none"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/>',
     moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="none"/>',
     download2: '<rect x="3" y="16" width="18" height="4" rx="1" fill="none"/><path d="M12 3v10" fill="none"/><polyline points="8,10 12,14 16,10" fill="none"/>',
+    arrowLeft: '<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12,5 5,12 12,19" fill="none"/>',
   };
   function icon(name, size, opts) {
     opts = opts || {};
@@ -134,7 +142,6 @@
     view: "quest",
     checked: { pushups: false, squats: false, abdos: false, plank: false },
     showFeedback: false,
-    showSettings: false,
     feedbackChoice: { pushups: null, squats: null, abdos: null, plank: null },
     reevalAnswered: { date: null, answer: null },
     reevalValues: {},
@@ -181,7 +188,16 @@
     } catch (e) {
       ui.error = true;
     }
+    applyTheme();
     render();
+  }
+  function applyTheme() {
+    var t = profile.theme && profile.theme !== "blue" ? profile.theme : "";
+    if (t) document.documentElement.setAttribute("data-theme", t);
+    else document.documentElement.removeAttribute("data-theme");
+  }
+  function setTheme(name) {
+    saveProfile(Object.assign({}, profile, { theme: name }));
   }
 
   // ---------- derived ----------
@@ -220,7 +236,6 @@
     if (shouldShowWelcome()) return "welcome";
     if (getMode() === "redemption" && !ui.redemptionAck) return "redemption-penalty";
     if (ui.showFeedback) return "feedback";
-    if (ui.showSettings) return "settings";
     return null;
   }
   function pseudo() {
@@ -579,7 +594,7 @@
         targets: Object.assign({}, DEFAULT_TARGETS, data.targets),
         fx: Object.assign({}, def.fx, data.fx),
       });
-      ui.showSettings = false;
+      ui.view = "quest";
       saveProfile(merged);
       alert("Import réussi. Bon retour, " + (merged.pseudo || "Chasseur") + ".");
     };
@@ -592,7 +607,6 @@
     ui.view = "quest";
     ui.checked = { pushups: false, squats: false, abdos: false, plank: false };
     ui.showFeedback = false;
-    ui.showSettings = false;
     ui.feedbackChoice = { pushups: null, squats: null, abdos: null, plank: null };
     ui.reevalAnswered = { date: null, answer: null };
     ui.reevalValues = {};
@@ -718,12 +732,19 @@
         "</div>" +
         '<div class="slf-headerright">' +
           '<div class="slf-datebadge slf-mono">' + esc(today.slice(5).replace("-", "/")) + "</div>" +
-          '<button class="slf-bellbtn" data-action="open-settings" aria-label="Réglages">' +
+          '<button class="slf-bellbtn" data-action="nav" data-view="settings" aria-label="Réglages">' +
             icon("gear", 16) +
           "</button>" +
         "</div>" +
       "</header>"
     );
+  }
+
+  function pageHeaderTpl(title) {
+    return '<header class="slf-pageheader"><span class="slf-mono slf-eyebrow slf-pagetitle">' + esc(title) + "</span></header>";
+  }
+  function backArrowTpl() {
+    return '<button class="slf-backarrow" data-action="nav" data-view="quest" aria-label="Retour à la quête">' + icon("arrowLeft", 18) + "</button>";
   }
 
   function taskRowTpl(key, targets, mode) {
@@ -857,6 +878,50 @@
     );
   }
 
+  function heatmapTpl() {
+    var days = [];
+    var base = new Date();
+    for (var i = 29; i >= 0; i--) {
+      var d = new Date(base);
+      d.setDate(d.getDate() - i);
+      var ds = todayStr(d);
+      var entry = null;
+      for (var j = 0; j < profile.history.length; j++) {
+        if (profile.history[j].date === ds) { entry = profile.history[j]; break; }
+      }
+      days.push({ date: ds, entry: entry, isToday: ds === todayStr() });
+    }
+    var cells = days.map(function (d) {
+      var cls = "slf-heatcell";
+      var label = d.date;
+      if (d.entry) {
+        if (d.entry.mode === "redemption") { cls += " heat-redemption"; label += " · Rédemption"; }
+        else if (d.entry.mode === "reeval") { cls += " heat-reeval"; label += " · Réévaluation"; }
+        else if (d.entry.mode === "joker") { cls += " heat-joker"; label += " · Repos"; }
+        else { cls += " heat-normal"; label += " · Séance"; }
+      } else {
+        cls += " heat-empty";
+        label += " · Manqué";
+      }
+      if (d.isToday) cls += " heat-today";
+      return '<div class="' + cls + '" title="' + esc(label) + '"></div>';
+    }).join("");
+
+    return (
+      '<div class="slf-heatmapsection">' +
+        '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">30 DERNIERS JOURS</p>' +
+        '<div class="slf-heatgrid">' + cells + "</div>" +
+        '<div class="slf-heatlegend">' +
+          '<span><i class="slf-heatdot heat-normal"></i>Séance</span>' +
+          '<span><i class="slf-heatdot heat-redemption"></i>Rédemption</span>' +
+          '<span><i class="slf-heatdot heat-reeval"></i>Réévaluation</span>' +
+          '<span><i class="slf-heatdot heat-joker"></i>Repos</span>' +
+          '<span><i class="slf-heatdot heat-empty"></i>Manqué</span>' +
+        "</div>" +
+      "</div>"
+    );
+  }
+
   function historyTpl() {
     var rows = profile.history.map(function (h) {
       var rank = RANKS.find(function (r) { return r.name === h.rank; }) || RANKS[0];
@@ -907,6 +972,7 @@
         (profile.history.length === 0
           ? '<div class="slf-empty"><p class="slf-donetext">Aucune quête accomplie.</p><p class="slf-dim">Commence ton ascension, ' + esc(pseudo()) + ".</p></div>"
           : '<div class="slf-histlist">' + rows + "</div>") +
+        heatmapTpl() +
       "</div></div>"
     );
   }
@@ -945,7 +1011,7 @@
     );
   }
 
-  function settingsModalTpl() {
+  function settingsTpl() {
     var installBlock = "";
     if (ui.installAvailable) {
       installBlock =
@@ -955,14 +1021,23 @@
         '<div class="slf-settingsdivider"></div>';
     }
     return (
-      '<div class="slf-overlay" data-action="close-settings"><div class="slf-modal" data-stop="1">' +
-        '<div class="slf-modalheadrow"><p class="slf-mono slf-eyebrow">RÉGLAGES</p><button class="slf-closebtn" data-action="close-settings">' + icon("x", 16) + "</button></div>" +
+      '<div class="slf-window"><div class="slf-windowbody">' +
 
         installBlock +
 
         '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">PROFIL</p>' +
         '<input type="text" maxlength="20" id="slf-pseudo-input" class="slf-textinput" placeholder="Ton pseudo" value="' + esc(profile.pseudo) + '" />' +
         '<button class="slf-togglebtn" style="margin-top:8px" data-action="save-pseudo">Enregistrer le pseudo</button>' +
+
+        '<div class="slf-settingsdivider"></div>' +
+        '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">APPARENCE</p>' +
+        '<p class="slf-dim slf-settingsnote">Couleur d\'accent de l\'interface.</p>' +
+        '<div class="slf-themerow">' +
+          THEMES.map(function (t) {
+            var active = (profile.theme || "blue") === t.key;
+            return '<button class="slf-themeswatch' + (active ? " active" : "") + '" data-action="set-theme" data-value="' + t.key + '" style="--swatch:' + t.color + '" aria-label="' + t.label + '"></button>';
+          }).join("") +
+        "</div>" +
 
         '<div class="slf-settingsdivider"></div>' +
         '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">SON & VIBRATION</p>' +
@@ -1010,13 +1085,20 @@
     else if (overlay === "welcome") overlayHtml = welcomeModalTpl();
     else if (overlay === "redemption-penalty") overlayHtml = redemptionPenaltyTpl();
     else if (overlay === "feedback") overlayHtml = feedbackModalTpl();
-    else if (overlay === "settings") overlayHtml = settingsModalTpl();
+
+    var isSettings = ui.view === "settings";
+    var isHistory = ui.view === "history";
+    var headHtml = isSettings ? pageHeaderTpl("RÉGLAGES") : isHistory ? pageHeaderTpl("HISTORIQUE") : headerTpl();
+    var mainHtml = isSettings ? settingsTpl() : isHistory ? historyTpl() : questTpl();
+    var navHtml = isSettings ? "" : navTpl();
+    var backHtml = ui.view !== "quest" ? backArrowTpl() : "";
 
     root.innerHTML =
       '<div class="slf-phone">' +
-        headerTpl() +
-        '<main class="slf-main">' + (ui.view === "quest" ? questTpl() : historyTpl()) + "</main>" +
-        navTpl() +
+        headHtml +
+        backHtml +
+        '<main class="slf-main">' + mainHtml + "</main>" +
+        navHtml +
       "</div>" +
       overlayHtml +
       rankUpTpl() +
@@ -1029,7 +1111,6 @@
     if (overlay && !e.target.closest("[data-stop]")) {
       var overlayAction = overlay.getAttribute("data-action");
       if (overlayAction === "close-feedback") ui.showFeedback = false;
-      if (overlayAction === "close-settings") ui.showSettings = false;
       render();
       return;
     }
@@ -1065,16 +1146,11 @@
       case "submit-reeval":
         submitReeval();
         break;
-      case "open-settings":
-        ui.showSettings = true;
-        render();
-        break;
-      case "close-settings":
-        ui.showSettings = false;
-        render();
-        break;
       case "toggle-fx":
         toggleFx();
+        break;
+      case "set-theme":
+        setTheme(el.getAttribute("data-value"));
         break;
       case "export-data":
         exportData();
@@ -1120,7 +1196,15 @@
     if (action === "onboard-custom-set") setOnboardCustom(e.target.getAttribute("data-key"), e.target.value);
     if (action === "import-file") handleImportFile(e.target.files[0]);
   });
+  // Surbrillance directe (sans re-render, pour ne pas perdre le curseur pendant la frappe)
+  document.addEventListener("input", function (e) {
+    if (e.target.id === "slf-pseudo-input") {
+      var changed = e.target.value.trim() !== (profile.pseudo || "");
+      e.target.classList.toggle("dirty", changed);
+    }
+  });
 
   ui.justBroken = checkAndApplyStreakBreak();
+  applyTheme();
   render();
 })();
