@@ -25,6 +25,7 @@ html, body {
   color: var(--text);
   font-family: 'Chakra Petch', sans-serif;
   min-height: 100vh;
+  overscroll-behavior-y: contain;
 }
 
 body {
@@ -125,7 +126,10 @@ body {
   backdrop-filter: blur(4px);
   color: var(--cyan);
   cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
 }
+.slf-backarrow:hover, .slf-backarrow:active, .slf-backarrow:focus-visible { opacity: 1; }
 .slf-bellbtn {
   width: 28px;
   height: 28px;
@@ -140,7 +144,7 @@ body {
 }
 .slf-bellbtn.active { color: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 8px rgba(var(--cyan-rgb),0.3); }
 
-.slf-main { flex: 1; padding: 16px; overflow-y: auto; }
+.slf-main { flex: 1; padding: 16px; overflow-y: auto; overscroll-behavior-y: contain; }
 
 .slf-window {
   border: 1px solid var(--cyan-dim);
@@ -397,7 +401,7 @@ body {
 
 .slf-empty { text-align: center; padding: 30px 10px; }
 
-.slf-heatmapsection { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--cyan-dim); }
+.slf-heatmapsection { margin: 20px 0; padding: 16px 0; border-top: 1px solid var(--cyan-dim); border-bottom: 1px solid var(--cyan-dim); }
 .slf-heatgrid {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
@@ -412,7 +416,7 @@ body {
 .slf-heatcell.heat-normal { background: var(--cyan); border-color: var(--cyan); }
 .slf-heatcell.heat-redemption { background: var(--danger); border-color: var(--danger); }
 .slf-heatcell.heat-reeval { background: #ffd76a; border-color: #ffd76a; }
-.slf-heatcell.heat-joker { background: #9db3c9; border-color: #9db3c9; }
+.slf-heatcell.heat-joker { background: #7ed957; border-color: #7ed957; }
 .slf-heatcell.heat-empty { background: rgba(255,255,255,0.03); }
 .slf-heatcell.heat-today { box-shadow: 0 0 0 2px var(--text); }
 
@@ -429,7 +433,7 @@ body {
 .slf-heatdot.heat-normal { background: var(--cyan); }
 .slf-heatdot.heat-redemption { background: var(--danger); }
 .slf-heatdot.heat-reeval { background: #ffd76a; }
-.slf-heatdot.heat-joker { background: #9db3c9; }
+.slf-heatdot.heat-joker { background: #7ed957; }
 .slf-heatdot.heat-empty { background: rgba(255,255,255,0.08); }
 
 .slf-histlist { display: flex; flex-direction: column; gap: 8px; }

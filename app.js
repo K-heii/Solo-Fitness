@@ -2,7 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
-  var APP_VERSION = "v3.6 — thèmes de couleur, heatmap 30 jours, surbrillance pseudo";
+  var APP_VERSION = "v3.7 — anti pull-to-refresh, heatmap repositionnée, joker vert, navigation simplifiée";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -969,10 +969,10 @@
           '<div class="slf-statchip">' + icon("flame", 14, { color: "#ff9d4d" }) + '<span class="slf-mono">' + profile.best + '</span><span class="slf-dim">record</span></div>' +
           '<div class="slf-statchip">' + icon("scroll", 14) + '<span class="slf-mono">' + profile.history.length + '</span><span class="slf-dim">séances</span></div>' +
         "</div>" +
+        heatmapTpl() +
         (profile.history.length === 0
           ? '<div class="slf-empty"><p class="slf-donetext">Aucune quête accomplie.</p><p class="slf-dim">Commence ton ascension, ' + esc(pseudo()) + ".</p></div>"
           : '<div class="slf-histlist">' + rows + "</div>") +
-        heatmapTpl() +
       "</div></div>"
     );
   }
@@ -981,7 +981,7 @@
     return (
       '<nav class="slf-nav">' +
         '<button class="slf-navbtn' + (ui.view === "quest" ? " active" : "") + '" data-action="nav" data-view="quest">' + icon("sword", 18) + "<span>Quête</span></button>" +
-        '<button class="slf-navbtn' + (ui.view === "history" ? " active" : "") + '" data-action="nav" data-view="history">' + icon("scroll", 18) + "<span>Historique</span></button>" +
+        '<button class="slf-navbtn' + (ui.view === "history" ? " active" : "") + '" data-action="nav" data-view="history">' + icon("scroll", 18) + "<span>Voir mes stats</span></button>" +
       "</nav>"
     );
   }
@@ -1090,7 +1090,7 @@
     var isHistory = ui.view === "history";
     var headHtml = isSettings ? pageHeaderTpl("RÉGLAGES") : isHistory ? pageHeaderTpl("HISTORIQUE") : headerTpl();
     var mainHtml = isSettings ? settingsTpl() : isHistory ? historyTpl() : questTpl();
-    var navHtml = isSettings ? "" : navTpl();
+    var navHtml = ui.view === "quest" ? navTpl() : "";
     var backHtml = ui.view !== "quest" ? backArrowTpl() : "";
 
     root.innerHTML =
