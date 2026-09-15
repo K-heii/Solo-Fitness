@@ -2,7 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
-  var APP_VERSION = "v3.7 — anti pull-to-refresh, heatmap repositionnée, joker vert, navigation simplifiée";
+  var APP_VERSION = "v3.8 — zones de sécurité, trophées, pool d'exercices personnalisés, nouveautés";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -24,16 +24,21 @@
     { key: "green", label: "Vert", color: "#2ee6a8" },
     { key: "red", label: "Rouge bordeaux", color: "#d9486e" },
   ];
-  var CAPS = { pushups: 60, squats: 60, abdos: 80, plank: 120 };
-  var STEP = { pushups: 2, squats: 2, abdos: 3, plank: 5 };
+  var BUILTIN_POOL = [
+    { id: "pushups", label: "Pompes", unit: "", icon: "dumbbell", step: 2, cap: 60 },
+    { id: "squats", label: "Squats", unit: "", icon: "activity", step: 2, cap: 60 },
+    { id: "abdos", label: "Abdos", unit: "", icon: "layers", step: 3, cap: 80 },
+    { id: "plank", label: "Gainage", unit: "s", icon: "timer", step: 5, cap: 120 },
+  ];
   var REDEMPTION_MULT = 1.5;
 
-  var EXO_META = {
-    pushups: { label: "Pompes", unit: "", icon: "dumbbell" },
-    squats: { label: "Squats", unit: "", icon: "activity" },
-    abdos: { label: "Abdos", unit: "", icon: "layers" },
-    plank: { label: "Gainage", unit: "s", icon: "timer" },
-  };
+  var CHANGELOG_VERSION = "v3.8";
+  var CHANGELOG_ITEMS = [
+    "Zones de sécurité : la flèche retour et les menus ne chevauchent plus l'encoche ni la barre de gestes de ton téléphone.",
+    "Trophées : de nouveaux badges à débloquer dans Voir mes stats (streak, rang, séances, rédemption, réévaluation, repos).",
+    "Rang S : le nombre de jours passés en Rang S est maintenant affiché.",
+    "Pool d'exercices : ajoute tes propres exercices dans Réglages. Au-delà de 4, choisis chaque jour lesquels faire.",
+  ];
 
   // ---------- helpers ----------
   function todayStr(d) {
@@ -69,13 +74,37 @@
     var progress = Math.min(1, (streak - current.min) / span);
     return { current: current, next: next, progress: progress };
   }
-  function redemptionTargets(t) {
-    return {
-      pushups: Math.min(CAPS.pushups, Math.ceil(t.pushups * REDEMPTION_MULT)),
-      squats: Math.min(CAPS.squats, Math.ceil(t.squats * REDEMPTION_MULT)),
-      abdos: Math.min(CAPS.abdos, Math.ceil(t.abdos * REDEMPTION_MULT)),
-      plank: Math.min(CAPS.plank, Math.ceil(t.plank * REDEMPTION_MULT)),
-    };
+  function redemptionTargetFor(exo, current) {
+    return Math.min(exo.cap, Math.ceil(current * REDEMPTION_MULT));
+  }
+  function redemptionTargets(t, ids) {
+    var out = {};
+    ids.forEach(function (id) {
+      var exo = getExoMeta(id);
+      out[id] = redemptionTargetFor(exo, t[id]);
+    });
+    return out;
+  }
+  function getExoMeta(id) {
+    var found = profile.exercisePool.filter(function (e) { return e.id === id; })[0];
+    if (found) return found;
+    var builtin = BUILTIN_POOL.filter(function (e) { return e.id === id; })[0];
+    return builtin || { id: id, label: id, unit: "", icon: "dumbbell", step: 2, cap: 100 };
+  }
+  function legacyExosFromEntry(h) {
+    return BUILTIN_POOL.map(function (exo) {
+      return { id: exo.id, label: exo.label, unit: exo.unit, value: h[exo.id], feedback: h.feedback ? h.feedback[exo.id] : null };
+    });
+  }
+  function syncCheckedToIds(ids) {
+    ids.forEach(function (id) { if (!(id in ui.checked)) ui.checked[id] = false; });
+    Object.keys(ui.checked).forEach(function (k) { if (ids.indexOf(k) === -1) delete ui.checked[k]; });
+  }
+  function todayExerciseIds() {
+    if (profile.exercisePool.length <= 4) return profile.exercisePool.map(function (e) { return e.id; });
+    var sel = profile.todaySelection;
+    if (sel && sel.date === todayStr() && sel.ids && sel.ids.length === 4) return sel.ids;
+    return null;
   }
   function defaultProfile() {
     return {
@@ -85,10 +114,13 @@
       best: 0,
       lastCompletedDate: null,
       lastWelcomeDate: null,
+      lastSeenVersion: null,
       targets: Object.assign({}, DEFAULT_TARGETS),
       history: [],
       lastJokerDate: null,
       theme: "blue",
+      exercisePool: BUILTIN_POOL.map(function (e) { return Object.assign({}, e); }),
+      todaySelection: { date: null, ids: [] },
       fx: { enabled: true },
     };
   }
@@ -140,9 +172,9 @@
   var profile = loadProfile();
   var ui = {
     view: "quest",
-    checked: { pushups: false, squats: false, abdos: false, plank: false },
+    checked: {},
     showFeedback: false,
-    feedbackChoice: { pushups: null, squats: null, abdos: null, plank: null },
+    feedbackChoice: {},
     reevalAnswered: { date: null, answer: null },
     reevalValues: {},
     reevalError: false,
@@ -153,6 +185,11 @@
     onboardName: "",
     onboardCustom: {},
     onboardCustomError: false,
+    selectionChoice: {},
+    selectionChoiceDate: null,
+    newExoName: "",
+    newExoUnit: "reps",
+    newExoError: false,
     rankUpFlash: null,
     error: false,
     installAvailable: false,
@@ -166,6 +203,8 @@
       var merged = Object.assign({}, def, loaded, {
         targets: Object.assign({}, DEFAULT_TARGETS, loaded.targets),
         fx: Object.assign({}, def.fx, loaded.fx),
+        exercisePool: loaded.exercisePool && loaded.exercisePool.length >= 4 ? loaded.exercisePool : def.exercisePool,
+        todaySelection: Object.assign({}, def.todaySelection, loaded.todaySelection),
       });
       // migration silencieuse : un profil qui a déjà de la donnée (créé avant l'onboarding)
       // ne doit jamais repasser par le calibrage initial, au risque d'écraser ses objectifs actuels.
@@ -200,6 +239,55 @@
     saveProfile(Object.assign({}, profile, { theme: name }));
   }
 
+  // ---------- pool d'exercices ----------
+  function setNewExoName(v) {
+    ui.newExoName = v;
+  }
+  function setNewExoUnit(v) {
+    ui.newExoUnit = v;
+    render();
+  }
+  function addExercise() {
+    var nameInput = document.getElementById("slf-newexo-name");
+    var startInput = document.getElementById("slf-newexo-start");
+    var name = nameInput ? nameInput.value.trim().slice(0, 24) : "";
+    var start = startInput ? parseFloat(startInput.value) : NaN;
+    if (!name || isNaN(start) || start <= 0) {
+      ui.newExoError = true;
+      render();
+      return;
+    }
+    ui.newExoError = false;
+    var isSeconds = ui.newExoUnit === "seconds";
+    var id = "custom_" + Date.now();
+    var exo = {
+      id: id,
+      label: name,
+      unit: isSeconds ? "s" : "",
+      icon: isSeconds ? "timer" : "dumbbell",
+      step: isSeconds ? 5 : 2,
+      cap: isSeconds ? 180 : 100,
+    };
+    var newTargets = Object.assign({}, profile.targets);
+    newTargets[id] = Math.round(start);
+    ui.newExoName = "";
+    ui.newExoUnit = "reps";
+    saveProfile(Object.assign({}, profile, {
+      exercisePool: profile.exercisePool.concat([exo]),
+      targets: newTargets,
+    }));
+  }
+  function removeExercise(id) {
+    if (profile.exercisePool.length <= 4) return;
+    if (!window.confirm("Retirer cet exercice de ton pool ? Ta progression passée reste dans l'historique.")) return;
+    var newPool = profile.exercisePool.filter(function (e) { return e.id !== id; });
+    var next = Object.assign({}, profile, { exercisePool: newPool });
+    if (profile.todaySelection && profile.todaySelection.ids && profile.todaySelection.ids.indexOf(id) !== -1) {
+      next.todaySelection = { date: null, ids: [] };
+    }
+    saveProfile(next);
+  }
+
   // ---------- derived ----------
   function getMode() {
     var today = todayStr();
@@ -232,6 +320,7 @@
   }
   function getActiveOverlay() {
     if (!profile.onboarded) return "onboarding";
+    if (profile.lastSeenVersion !== CHANGELOG_VERSION) return "changelog";
     if (ui.justBroken) return "streak-broken";
     if (shouldShowWelcome()) return "welcome";
     if (getMode() === "redemption" && !ui.redemptionAck) return "redemption-penalty";
@@ -240,6 +329,9 @@
   }
   function pseudo() {
     return profile.pseudo || "Chasseur";
+  }
+  function ackChangelog() {
+    saveProfile(Object.assign({}, profile, { lastSeenVersion: CHANGELOG_VERSION }));
   }
 
   // ---------- actions : onboarding ----------
@@ -268,7 +360,7 @@
     ui.onboardCustom[key] = isNaN(val) ? null : val;
   }
   function finishCustomOnboarding() {
-    var keys = Object.keys(EXO_META);
+    var keys = BUILTIN_POOL.map(function (e) { return e.id; });
     var v = ui.onboardCustom;
     var complete = keys.every(function (k) { return typeof v[k] === "number" && v[k] > 0; });
     if (!complete) {
@@ -286,6 +378,7 @@
       onboarded: true,
       targets: Object.assign({}, targets),
       lastWelcomeDate: today,
+      lastSeenVersion: CHANGELOG_VERSION,
     });
     ui.onboardStep = 1;
     ui.onboardMode = "choose";
@@ -311,6 +404,19 @@
   }
 
   // ---------- actions : quête ----------
+  function toggleSelectionExo(id) {
+    var count = Object.keys(ui.selectionChoice).filter(function (k) { return ui.selectionChoice[k]; }).length;
+    if (ui.selectionChoice[id]) ui.selectionChoice[id] = false;
+    else if (count < 4) ui.selectionChoice[id] = true;
+    render();
+  }
+  function submitSelection() {
+    var ids = Object.keys(ui.selectionChoice).filter(function (k) { return ui.selectionChoice[k]; });
+    if (ids.length !== 4) return;
+    ui.selectionChoice = {};
+    saveProfile(Object.assign({}, profile, { todaySelection: { date: todayStr(), ids: ids } }));
+  }
+
   function toggleTask(key) {
     var mode = getMode();
     if (mode !== "normal" && mode !== "redemption") return;
@@ -319,9 +425,12 @@
     render();
   }
   function openFeedback() {
-    var vals = Object.keys(ui.checked).map(function (k) { return ui.checked[k]; });
+    var ids = Object.keys(ui.checked);
+    var vals = ids.map(function (k) { return ui.checked[k]; });
     if (vals.indexOf(false) !== -1) return;
-    ui.feedbackChoice = { pushups: null, squats: null, abdos: null, plank: null };
+    var fc = {};
+    ids.forEach(function (id) { fc[id] = null; });
+    ui.feedbackChoice = fc;
     ui.showFeedback = true;
     render();
   }
@@ -330,31 +439,29 @@
     render();
   }
   function finishSession() {
-    var keys = Object.keys(EXO_META);
+    var keys = Object.keys(ui.feedbackChoice);
     var complete = keys.every(function (k) { return ui.feedbackChoice[k] !== null; });
     if (!complete) return;
 
     var mode = getMode();
     var today = todayStr();
-    var targets = mode === "redemption" ? redemptionTargets(profile.targets) : profile.targets;
+    var targets = mode === "redemption" ? redemptionTargets(profile.targets, keys) : profile.targets;
     var wasRank = getRank(profile.streak).name;
     var newStreak = profile.streak + 1; // la rédemption conserve la streak
     var newBest = Math.max(profile.best, newStreak);
 
-    var newTargets = {};
-    keys.forEach(function (k) {
+    var newTargets = Object.assign({}, profile.targets);
+    var exercises = keys.map(function (k) {
+      var exo = getExoMeta(k);
       var easy = ui.feedbackChoice[k] === "facile";
-      newTargets[k] = easy ? Math.min(CAPS[k], profile.targets[k] + STEP[k]) : profile.targets[k];
+      newTargets[k] = easy ? Math.min(exo.cap, profile.targets[k] + exo.step) : profile.targets[k];
+      return { id: k, label: exo.label, unit: exo.unit, value: targets[k], feedback: ui.feedbackChoice[k] };
     });
 
     var entry = {
       date: today,
       mode: mode,
-      pushups: targets.pushups,
-      squats: targets.squats,
-      abdos: targets.abdos,
-      plank: targets.plank,
-      feedback: Object.assign({}, ui.feedbackChoice),
+      exercises: exercises,
       rank: getRank(newStreak).name,
     };
     var next = Object.assign({}, profile, {
@@ -365,7 +472,8 @@
       history: [entry].concat(profile.history),
     });
     ui.showFeedback = false;
-    ui.checked = { pushups: false, squats: false, abdos: false, plank: false };
+    ui.checked = {};
+    ui.feedbackChoice = {};
     ui.redemptionAck = false;
     var newRank = getRank(newStreak).name;
     saveProfile(next);
@@ -386,7 +494,7 @@
     ui.reevalValues[key] = isNaN(val) ? null : val;
   }
   function submitReeval() {
-    var keys = Object.keys(EXO_META);
+    var keys = profile.exercisePool.map(function (e) { return e.id; });
     var v = ui.reevalValues;
     var complete = keys.every(function (k) { return typeof v[k] === "number" && v[k] > 0; });
     if (!complete) {
@@ -401,21 +509,19 @@
     var newStreak = profile.streak + 1;
     var newBest = Math.max(profile.best, newStreak);
 
-    var newTargets = {};
-    keys.forEach(function (k) {
-      var isPlank = k === "plank";
-      var bump = reevalBump(v[k], profile.targets[k], isPlank);
-      newTargets[k] = Math.min(CAPS[k], profile.targets[k] + bump);
+    var newTargets = Object.assign({}, profile.targets);
+    var exercises = keys.map(function (k) {
+      var exo = getExoMeta(k);
+      var isTimeBased = exo.unit === "s";
+      var bump = reevalBump(v[k], profile.targets[k], isTimeBased);
+      newTargets[k] = Math.min(exo.cap, profile.targets[k] + bump);
+      return { id: k, label: exo.label, unit: exo.unit, value: v[k], feedback: null };
     });
 
     var entry = {
       date: today,
       mode: "reeval",
-      pushups: v.pushups,
-      squats: v.squats,
-      abdos: v.abdos,
-      plank: v.plank,
-      feedback: null,
+      exercises: exercises,
       rank: getRank(newStreak).name,
     };
     var next = Object.assign({}, profile, {
@@ -593,6 +699,8 @@
       var merged = Object.assign({}, def, data, {
         targets: Object.assign({}, DEFAULT_TARGETS, data.targets),
         fx: Object.assign({}, def.fx, data.fx),
+        exercisePool: data.exercisePool && data.exercisePool.length >= 4 ? data.exercisePool : def.exercisePool,
+        todaySelection: Object.assign({}, def.todaySelection, data.todaySelection),
       });
       ui.view = "quest";
       saveProfile(merged);
@@ -605,20 +713,27 @@
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
     profile = defaultProfile();
     ui.view = "quest";
-    ui.checked = { pushups: false, squats: false, abdos: false, plank: false };
+    ui.checked = {};
     ui.showFeedback = false;
-    ui.feedbackChoice = { pushups: null, squats: null, abdos: null, plank: null };
+    ui.feedbackChoice = {};
     ui.reevalAnswered = { date: null, answer: null };
     ui.reevalValues = {};
     ui.reevalError = false;
     ui.redemptionAck = false;
+    ui.justBroken = false;
     ui.onboardStep = 1;
     ui.onboardMode = "choose";
     ui.onboardName = "";
     ui.onboardCustom = {};
     ui.onboardCustomError = false;
+    ui.selectionChoice = {};
+    ui.selectionChoiceDate = null;
+    ui.newExoName = "";
+    ui.newExoUnit = "reps";
+    ui.newExoError = false;
     ui.rankUpFlash = null;
     ui.error = false;
+    applyTheme();
     render();
   }
 
@@ -650,7 +765,7 @@
 
     var customForm = "";
     if (ui.onboardMode === "custom") {
-      var rows = Object.keys(EXO_META).map(function (k) { return numberRowTpl(k, "onboard-custom-set", ui.onboardCustom); }).join("");
+      var rows = BUILTIN_POOL.map(function (exo) { return numberRowTpl(exo, "onboard-custom-set", ui.onboardCustom); }).join("");
       customForm =
         '<div style="margin-top:12px">' +
           rows +
@@ -709,6 +824,18 @@
     { eyebrow: "◈ ÉCHEC DE LA RÉDEMPTION ◈", title: "{p}, la fenêtre s'est refermée.", body: "Ta série est tombée à zéro. Le Système ne juge pas les chutes — seulement ceux qui restent à terre.", cta: "Je me relève" },
   ];
 
+  function changelogTpl() {
+    var items = CHANGELOG_ITEMS.map(function (i) { return "<li>" + esc(i) + "</li>"; }).join("");
+    return (
+      '<div class="slf-overlay"><div class="slf-modal" data-stop="1">' +
+        '<p class="slf-mono slf-eyebrow">◈ MISE À JOUR ◈</p>' +
+        '<h2 class="slf-modaltitle">Nouveautés</h2>' +
+        '<ul class="slf-changelist">' + items + "</ul>" +
+        '<button class="slf-cta" style="margin-top:6px" data-action="ack-changelog">J\'ai compris</button>' +
+      "</div></div>"
+    );
+  }
+
   function welcomeModalTpl() {
     return messageModalTpl(pickVariant(WELCOME_VARIANTS, "welcome-" + todayStr()), "dismiss-welcome", false);
   }
@@ -747,27 +874,27 @@
     return '<button class="slf-backarrow" data-action="nav" data-view="quest" aria-label="Retour à la quête">' + icon("arrowLeft", 18) + "</button>";
   }
 
-  function taskRowTpl(key, targets, mode) {
-    var meta = EXO_META[key];
+  function taskRowTpl(exo, targets, mode) {
+    var key = exo.id;
     var isChecked = ui.checked[key];
     var disabled = mode === "done";
     return (
       '<button class="slf-taskrow' + (isChecked ? " done" : "") + '" ' + (disabled ? "" : 'data-action="toggle-task" data-key="' + key + '"') + '>' +
-        '<div class="slf-taskicon">' + icon(meta.icon, 18) + "</div>" +
-        '<div class="slf-taskinfo"><p class="slf-tasklabel">' + esc(meta.label) + '</p><p class="slf-mono slf-tasktarget">' + targets[key] + esc(meta.unit) + "</p></div>" +
+        '<div class="slf-taskicon">' + icon(exo.icon, 18) + "</div>" +
+        '<div class="slf-taskinfo"><p class="slf-tasklabel">' + esc(exo.label) + '</p><p class="slf-mono slf-tasktarget">' + targets[key] + esc(exo.unit) + "</p></div>" +
         (isChecked ? icon("checkCircle", 22, { color: "#2fd7ff" }) : icon("circle", 22, { color: "#28425e" })) +
       "</button>"
     );
   }
 
-  function numberRowTpl(key, action, valuesObj) {
-    var meta = EXO_META[key];
+  function numberRowTpl(exo, action, valuesObj) {
+    var key = exo.id;
     var val = valuesObj[key];
     return (
       '<div class="slf-taskrow">' +
-        '<div class="slf-taskicon">' + icon(meta.icon, 18) + "</div>" +
-        '<div class="slf-taskinfo"><p class="slf-tasklabel">' + esc(meta.label) + "</p></div>" +
-        '<input type="number" min="0" inputmode="numeric" class="slf-numinput" placeholder="' + (meta.unit === "s" ? "sec" : "reps") + '" data-action="' + action + '" data-key="' + key + '" value="' + (typeof val === "number" ? val : "") + '" />' +
+        '<div class="slf-taskicon">' + icon(exo.icon, 18) + "</div>" +
+        '<div class="slf-taskinfo"><p class="slf-tasklabel">' + esc(exo.label) + "</p></div>" +
+        '<input type="number" min="0" inputmode="numeric" class="slf-numinput" placeholder="' + (exo.unit === "s" ? "sec" : "reps") + '" data-action="' + action + '" data-key="' + key + '" value="' + (typeof val === "number" ? val : "") + '" />' +
       "</div>"
     );
   }
@@ -782,6 +909,29 @@
         "</div>" +
         '<div class="slf-progressbar"><div class="slf-progressfill" style="width:' + (info.progress * 100) + "%;background:" + info.current.glow + '"></div></div>' +
       "</div>"
+    );
+  }
+
+  function exerciseSelectionTpl() {
+    var rows = profile.exercisePool.map(function (exo) {
+      var checked = !!ui.selectionChoice[exo.id];
+      return (
+        '<button class="slf-taskrow' + (checked ? " done" : "") + '" data-action="toggle-selection" data-key="' + exo.id + '">' +
+          '<div class="slf-taskicon">' + icon(exo.icon, 18) + "</div>" +
+          '<div class="slf-taskinfo"><p class="slf-tasklabel">' + esc(exo.label) + '</p><p class="slf-mono slf-tasktarget">' + profile.targets[exo.id] + esc(exo.unit) + "</p></div>" +
+          (checked ? icon("checkCircle", 22, { color: "#2fd7ff" }) : icon("circle", 22, { color: "#28425e" })) +
+        "</button>"
+      );
+    }).join("");
+    var count = Object.keys(ui.selectionChoice).filter(function (k) { return ui.selectionChoice[k]; }).length;
+    return (
+      '<div class="slf-window"><div class="slf-windowhead"><span class="slf-mono">◈ CHOISIS TES 4 EXERCICES ◈</span></div>' +
+      '<div class="slf-windowbody">' +
+        '<p class="slf-dim" style="margin-bottom:12px">Ton pool contient plus de 4 exercices. Sélectionne ceux d\'aujourd\'hui.</p>' +
+        rows +
+        '<p class="slf-dim" style="text-align:center;margin:10px 0">' + count + "/4 sélectionnés</p>" +
+        '<button class="slf-cta" ' + (count === 4 ? 'data-action="submit-selection"' : "disabled") + ">Lancer la quête</button>" +
+      "</div></div>"
     );
   }
 
@@ -801,7 +951,7 @@
   }
 
   function reevalFormTpl() {
-    var rows = Object.keys(EXO_META).map(function (k) { return numberRowTpl(k, "reeval-set", ui.reevalValues); }).join("");
+    var rows = profile.exercisePool.map(function (exo) { return numberRowTpl(exo, "reeval-set", ui.reevalValues); }).join("");
     return (
       '<div class="slf-window"><div class="slf-windowhead"><span class="slf-mono">◈ RÉÉVALUATION ◈</span></div>' +
       '<div class="slf-windowbody">' +
@@ -819,13 +969,24 @@
     if (mode === "reeval-prompt") return reevalPromptTpl();
     if (mode === "reeval") return reevalFormTpl();
 
-    var targets = mode === "redemption" ? redemptionTargets(profile.targets) : profile.targets;
+    var todayIds = null;
+    if (mode === "normal" || mode === "redemption") {
+      todayIds = todayExerciseIds();
+      if (todayIds === null) {
+        if (ui.selectionChoiceDate !== todayStr()) {
+          ui.selectionChoice = {};
+          ui.selectionChoiceDate = todayStr();
+        }
+        return exerciseSelectionTpl();
+      }
+    }
+
+    var targets = mode === "redemption" ? redemptionTargets(profile.targets, todayIds) : profile.targets;
 
     if (mode === "done") {
       var last = profile.history[0];
-      var chips = Object.keys(EXO_META).map(function (k) {
-        var meta = EXO_META[k];
-        return '<div class="slf-targetchip">' + icon(meta.icon, 14) + '<span class="slf-mono">' + profile.targets[k] + esc(meta.unit) + '</span><span class="slf-dim">' + esc(meta.label) + "</span></div>";
+      var chips = profile.exercisePool.map(function (exo) {
+        return '<div class="slf-targetchip">' + icon(exo.icon, 14) + '<span class="slf-mono">' + profile.targets[exo.id] + esc(exo.unit) + '</span><span class="slf-dim">' + esc(exo.label) + "</span></div>";
       }).join("");
       var subMsg = "";
       if (last) {
@@ -834,7 +995,8 @@
         } else if (last.mode === "joker") {
           subMsg = "Jour de repos utilisé. Objectifs inchangés pour demain.";
         } else {
-          var anyEasy = last.feedback && Object.keys(last.feedback).some(function (k) { return last.feedback[k] === "facile"; });
+          var lastList = last.exercises || legacyExosFromEntry(last);
+          var anyEasy = lastList.some(function (e) { return e.feedback === "facile"; });
           subMsg = anyEasy ? "Objectifs ajustés selon ton ressenti par exercice." : "Même intensité demain.";
         }
       }
@@ -844,14 +1006,15 @@
           icon("checkCircle", 40, { color: "#2fd7ff" }) +
           '<p class="slf-donetext">Séance validée pour aujourd\'hui, ' + esc(pseudo()) + ".</p>" +
           (subMsg ? '<p class="slf-dim">' + subMsg + "</p>" : "") +
-          '<div class="slf-nexttargets"><p class="slf-mono slf-eyebrow">DEMAIN</p><div class="slf-targetrow">' + chips + "</div></div>" +
+          '<div class="slf-nexttargets"><p class="slf-mono slf-eyebrow">TES OBJECTIFS</p><div class="slf-targetrow">' + chips + "</div></div>" +
           rankProgressTpl() +
         "</div></div>"
       );
     }
 
     var isRedemption = mode === "redemption";
-    var rows = Object.keys(EXO_META).map(function (k) { return taskRowTpl(k, targets, mode); }).join("");
+    syncCheckedToIds(todayIds);
+    var rows = todayIds.map(function (id) { return taskRowTpl(getExoMeta(id), targets, mode); }).join("");
     var doneCount = Object.keys(ui.checked).filter(function (k) { return ui.checked[k]; }).length;
     var allChecked = doneCount === Object.keys(ui.checked).length;
 
@@ -874,6 +1037,54 @@
           '<button class="slf-cta" ' + (allChecked ? 'data-action="open-feedback"' : "disabled") + ">Terminer la séance</button>" +
           jokerBlock +
         "</div>" +
+      "</div>"
+    );
+  }
+
+  function computeTrophies() {
+    var sessions = profile.history.length;
+    var daysAtS = profile.history.filter(function (h) { return h.rank === "S"; }).length;
+    var list = [
+      { id: "streak7", icon: "flame", label: "7 jours d'affilée", unlocked: profile.best >= 7, progress: Math.min(profile.best, 7) + "/7" },
+      { id: "streak30", icon: "flame", label: "30 jours d'affilée", unlocked: profile.best >= 30, progress: Math.min(profile.best, 30) + "/30" },
+      { id: "rankB", icon: "hexagon", label: "Rang B atteint", unlocked: profile.best >= 14 },
+      { id: "rankS", icon: "hexagon", label: "Rang S atteint", unlocked: profile.best >= 60, sub: profile.best >= 60 ? (daysAtS + " jour" + (daysAtS > 1 ? "s" : "") + " en Rang S") : null },
+      { id: "s10", icon: "scroll", label: "10 séances", unlocked: sessions >= 10, progress: Math.min(sessions, 10) + "/10" },
+      { id: "s50", icon: "scroll", label: "50 séances", unlocked: sessions >= 50, progress: Math.min(sessions, 50) + "/50" },
+      { id: "joker1", icon: "moon", label: "Premier jour de repos", unlocked: profile.history.some(function (h) { return h.mode === "joker"; }) },
+      { id: "reeval1", icon: "trendingUp", label: "Première réévaluation", unlocked: profile.history.some(function (h) { return h.mode === "reeval"; }) },
+      { id: "redemption1", icon: "zap", label: "Première rédemption réussie", unlocked: profile.history.some(function (h) { return h.mode === "redemption"; }) },
+    ];
+    var tiers = [100];
+    if (sessions >= 100) {
+      var next = 150;
+      while (next <= sessions) { tiers.push(next); next += 50; }
+      tiers.push(next);
+    }
+    tiers.forEach(function (t) {
+      list.push({ id: "s" + t, icon: "scroll", label: t + " séances", unlocked: sessions >= t, progress: Math.min(sessions, t) + "/" + t });
+    });
+    return list;
+  }
+
+  function trophiesTpl() {
+    var trophies = computeTrophies();
+    var cells = trophies.map(function (t) {
+      var cls = "slf-trophy" + (t.unlocked ? " unlocked" : "");
+      var iconColor = t.unlocked ? "var(--cyan)" : "var(--dim)";
+      return (
+        '<div class="' + cls + '" title="' + esc(t.label) + '">' +
+          '<div class="slf-trophyicon">' + icon(t.icon, 20, { color: iconColor }) + "</div>" +
+          '<p class="slf-trophylabel">' + esc(t.label) + "</p>" +
+          (!t.unlocked && t.progress ? '<p class="slf-trophyprogress">' + esc(t.progress) + "</p>" : "") +
+          (t.unlocked && t.sub ? '<p class="slf-trophyprogress">' + esc(t.sub) + "</p>" : "") +
+        "</div>"
+      );
+    }).join("");
+    return (
+      '<div class="slf-trophysection">' +
+        '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">TROPHÉES</p>' +
+        '<div class="slf-trophygrid">' + cells + "</div>" +
       "</div>"
     );
   }
@@ -930,21 +1141,21 @@
       else if (h.mode === "reeval") modePill = '<span class="slf-pill reeval">RÉÉVALUATION</span>';
       else if (h.mode === "joker") modePill = '<span class="slf-pill joker">REPOS</span>';
 
+      var exoList = h.exercises || (h.mode !== "joker" ? legacyExosFromEntry(h) : []);
+
       var rightIcons;
       if (h.mode === "reeval") {
         rightIcons = icon("trendingUp", 14, { color: "#ffd76a" });
       } else if (h.mode === "joker") {
-        rightIcons = icon("moon", 14, { color: "#9db3c9" });
-      } else if (h.feedback) {
-        rightIcons = Object.keys(EXO_META).map(function (k) {
-          var easy = h.feedback[k] === "facile";
+        rightIcons = icon("moon", 14, { color: "#7ed957" });
+      } else {
+        rightIcons = exoList.map(function (e) {
+          var easy = e.feedback === "facile";
           return icon(easy ? "zap" : "wind", 12, { color: easy ? "#2fd7ff" : "#8b9fb5" });
         }).join("");
-      } else {
-        rightIcons = "";
       }
 
-      var exoLine = h.mode === "joker" ? "Jour de repos (joker)" : h.pushups + "P · " + h.squats + "Sq · " + h.abdos + "Ab · " + h.plank + "s";
+      var exoLine = h.mode === "joker" ? "Jour de repos (joker)" : exoList.map(function (e) { return e.value + (e.unit || "") + " " + e.label; }).join(" · ");
 
       return (
         '<div class="slf-histrow2">' +
@@ -954,7 +1165,7 @@
             '<span class="slf-rankpill" style="color:' + rank.glow + ";border-color:" + rank.glow + ';margin-left:auto">' + h.rank + "</span>" +
           "</div>" +
           '<div class="slf-histbottom">' +
-            '<span class="slf-mono slf-dim">' + exoLine + "</span>" +
+            '<span class="slf-mono slf-dim">' + esc(exoLine) + "</span>" +
             '<div class="slf-histicons">' + rightIcons + "</div>" +
           "</div>" +
         "</div>"
@@ -969,6 +1180,7 @@
           '<div class="slf-statchip">' + icon("flame", 14, { color: "#ff9d4d" }) + '<span class="slf-mono">' + profile.best + '</span><span class="slf-dim">record</span></div>' +
           '<div class="slf-statchip">' + icon("scroll", 14) + '<span class="slf-mono">' + profile.history.length + '</span><span class="slf-dim">séances</span></div>' +
         "</div>" +
+        trophiesTpl() +
         heatmapTpl() +
         (profile.history.length === 0
           ? '<div class="slf-empty"><p class="slf-donetext">Aucune quête accomplie.</p><p class="slf-dim">Commence ton ascension, ' + esc(pseudo()) + ".</p></div>"
@@ -987,12 +1199,13 @@
   }
 
   function feedbackModalTpl() {
-    var rows = Object.keys(EXO_META).map(function (k) {
-      var meta = EXO_META[k];
+    var ids = Object.keys(ui.feedbackChoice);
+    var rows = ids.map(function (k) {
+      var exo = getExoMeta(k);
       var choice = ui.feedbackChoice[k];
       return (
         '<div class="slf-fbrow">' +
-          '<div class="slf-fbrowlabel">' + icon(meta.icon, 16) + "<span>" + esc(meta.label) + "</span></div>" +
+          '<div class="slf-fbrowlabel">' + icon(exo.icon, 16) + "<span>" + esc(exo.label) + "</span></div>" +
           '<div class="slf-fbrowbtns">' +
             '<button class="slf-fbtoggle easy' + (choice === "facile" ? " active" : "") + '" data-action="set-feedback" data-key="' + k + '" data-value="facile">' + icon("zap", 14) + "<span>Facile</span></button>" +
             '<button class="slf-fbtoggle hard' + (choice === "essouffle" ? " active" : "") + '" data-action="set-feedback" data-key="' + k + '" data-value="essouffle">' + icon("wind", 14) + "<span>Essoufflé</span></button>" +
@@ -1000,7 +1213,7 @@
         "</div>"
       );
     }).join("");
-    var complete = Object.keys(EXO_META).every(function (k) { return ui.feedbackChoice[k] !== null; });
+    var complete = ids.every(function (k) { return ui.feedbackChoice[k] !== null; });
     return (
       '<div class="slf-overlay" data-action="close-feedback"><div class="slf-modal" data-stop="1">' +
         '<p class="slf-mono slf-eyebrow">FIN DE SÉANCE</p><h2 class="slf-modaltitle">Comment t\'es-tu senti, exercice par exercice ?</h2>' +
@@ -1008,6 +1221,37 @@
         rows +
         '<button class="slf-cta" style="margin-top:14px" ' + (complete ? 'data-action="submit-feedback"' : "disabled") + ">Valider</button>" +
       "</div></div>"
+    );
+  }
+
+  function exercisePoolListTpl() {
+    var canRemove = profile.exercisePool.length > 4;
+    var rows = profile.exercisePool.map(function (exo) {
+      return (
+        '<div class="slf-exorow">' +
+          '<div class="slf-taskicon">' + icon(exo.icon, 16) + "</div>" +
+          '<div class="slf-taskinfo"><p class="slf-tasklabel">' + esc(exo.label) + '</p><p class="slf-mono slf-tasktarget">' + profile.targets[exo.id] + esc(exo.unit) + "</p></div>" +
+          (canRemove ? '<button class="slf-exoremove" data-action="remove-exercise" data-key="' + exo.id + '" aria-label="Retirer">' + icon("x", 14) + "</button>" : "") +
+        "</div>"
+      );
+    }).join("");
+    return '<div class="slf-exolist">' + rows + "</div>";
+  }
+
+  function addExerciseFormTpl() {
+    return (
+      '<div class="slf-addexo">' +
+        '<input type="text" maxlength="24" id="slf-newexo-name" class="slf-textinput" placeholder="Nom de l\'exercice (ex: Tractions)" data-action="set-newexo-name" value="' + esc(ui.newExoName) + '" />' +
+        '<div class="slf-addexorow">' +
+          '<div class="slf-unittoggle">' +
+            '<button class="slf-unitbtn' + (ui.newExoUnit === "reps" ? " active" : "") + '" data-action="set-newexo-unit" data-value="reps">Répétitions</button>' +
+            '<button class="slf-unitbtn' + (ui.newExoUnit === "seconds" ? " active" : "") + '" data-action="set-newexo-unit" data-value="seconds">Secondes</button>' +
+          "</div>" +
+          '<input type="number" min="1" inputmode="numeric" id="slf-newexo-start" class="slf-numinput" placeholder="Début" />' +
+        "</div>" +
+        (ui.newExoError ? '<p class="slf-settingsnote danger">Donne un nom et une valeur de départ supérieure à 0.</p>' : "") +
+        '<button class="slf-togglebtn" style="margin-top:8px" data-action="add-exercise">' + icon("checkCircle", 16) + " Ajouter à mon pool</button>" +
+      "</div>"
     );
   }
 
@@ -1038,6 +1282,12 @@
             return '<button class="slf-themeswatch' + (active ? " active" : "") + '" data-action="set-theme" data-value="' + t.key + '" style="--swatch:' + t.color + '" aria-label="' + t.label + '"></button>';
           }).join("") +
         "</div>" +
+
+        '<div class="slf-settingsdivider"></div>' +
+        '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">EXERCICES</p>' +
+        '<p class="slf-dim slf-settingsnote">Ton pool actuel. Tant qu\'il en compte 4, la quête reste automatique ; au-delà, tu choisis chaque jour lesquels faire.</p>' +
+        exercisePoolListTpl() +
+        addExerciseFormTpl() +
 
         '<div class="slf-settingsdivider"></div>' +
         '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">SON & VIBRATION</p>' +
@@ -1081,6 +1331,7 @@
     var overlay = getActiveOverlay();
     var overlayHtml = "";
     if (overlay === "onboarding") overlayHtml = onboardingTpl();
+    else if (overlay === "changelog") overlayHtml = changelogTpl();
     else if (overlay === "streak-broken") overlayHtml = streakBrokenTpl();
     else if (overlay === "welcome") overlayHtml = welcomeModalTpl();
     else if (overlay === "redemption-penalty") overlayHtml = redemptionPenaltyTpl();
@@ -1122,6 +1373,12 @@
         ui.view = el.getAttribute("data-view");
         render();
         break;
+      case "toggle-selection":
+        toggleSelectionExo(el.getAttribute("data-key"));
+        break;
+      case "submit-selection":
+        submitSelection();
+        break;
       case "toggle-task":
         toggleTask(el.getAttribute("data-key"));
         break;
@@ -1152,6 +1409,15 @@
       case "set-theme":
         setTheme(el.getAttribute("data-value"));
         break;
+      case "set-newexo-unit":
+        setNewExoUnit(el.getAttribute("data-value"));
+        break;
+      case "add-exercise":
+        addExercise();
+        break;
+      case "remove-exercise":
+        removeExercise(el.getAttribute("data-key"));
+        break;
       case "export-data":
         exportData();
         break;
@@ -1181,6 +1447,9 @@
       case "dismiss-welcome":
         dismissWelcome();
         break;
+      case "ack-changelog":
+        ackChangelog();
+        break;
       case "ack-redemption":
         ackRedemption();
         break;
@@ -1194,6 +1463,7 @@
     if (action === "reeval-set") setReevalValue(e.target.getAttribute("data-key"), e.target.value);
     if (action === "set-onboard-name") setOnboardName(e.target.value);
     if (action === "onboard-custom-set") setOnboardCustom(e.target.getAttribute("data-key"), e.target.value);
+    if (action === "set-newexo-name") setNewExoName(e.target.value);
     if (action === "import-file") handleImportFile(e.target.files[0]);
   });
   // Surbrillance directe (sans re-render, pour ne pas perdre le curseur pendant la frappe)
