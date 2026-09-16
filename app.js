@@ -2,7 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
-  var APP_VERSION = "v3.8 — zones de sécurité, trophées, pool d'exercices personnalisés, nouveautés";
+  var APP_VERSION = "v3.10 — trophée streak à paliers infinis (jours → mois → années)";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -25,19 +25,16 @@
     { key: "red", label: "Rouge bordeaux", color: "#d9486e" },
   ];
   var BUILTIN_POOL = [
-    { id: "pushups", label: "Pompes", unit: "", icon: "dumbbell", step: 2, cap: 60 },
-    { id: "squats", label: "Squats", unit: "", icon: "activity", step: 2, cap: 60 },
-    { id: "abdos", label: "Abdos", unit: "", icon: "layers", step: 3, cap: 80 },
-    { id: "plank", label: "Gainage", unit: "s", icon: "timer", step: 5, cap: 120 },
+    { id: "pushups", label: "Pompes", unit: "", icon: "dumbbell", step: 2, cap: 60, builtin: true },
+    { id: "squats", label: "Squats", unit: "", icon: "activity", step: 2, cap: 60, builtin: true },
+    { id: "abdos", label: "Abdos", unit: "", icon: "layers", step: 3, cap: 80, builtin: true },
+    { id: "plank", label: "Gainage", unit: "s", icon: "timer", step: 5, cap: 120, builtin: true },
   ];
   var REDEMPTION_MULT = 1.5;
 
-  var CHANGELOG_VERSION = "v3.8";
+  var CHANGELOG_VERSION = "v3.10";
   var CHANGELOG_ITEMS = [
-    "Zones de sécurité : la flèche retour et les menus ne chevauchent plus l'encoche ni la barre de gestes de ton téléphone.",
-    "Trophées : de nouveaux badges à débloquer dans Voir mes stats (streak, rang, séances, rédemption, réévaluation, repos).",
-    "Rang S : le nombre de jours passés en Rang S est maintenant affiché.",
-    "Pool d'exercices : ajoute tes propres exercices dans Réglages. Au-delà de 4, choisis chaque jour lesquels faire.",
+    "Trophée streak infini : après 30 jours, les paliers continuent par mois (2, 3, 4... jusqu'à 11), puis par année (1 an, 2 ans, 3 ans...).",
   ];
 
   // ---------- helpers ----------
@@ -267,6 +264,7 @@
       icon: isSeconds ? "timer" : "dumbbell",
       step: isSeconds ? 5 : 2,
       cap: isSeconds ? 180 : 100,
+      builtin: false,
     };
     var newTargets = Object.assign({}, profile.targets);
     newTargets[id] = Math.round(start);
@@ -278,7 +276,8 @@
     }));
   }
   function removeExercise(id) {
-    if (profile.exercisePool.length <= 4) return;
+    var exo = getExoMeta(id);
+    if (exo.builtin) return;
     if (!window.confirm("Retirer cet exercice de ton pool ? Ta progression passée reste dans l'historique.")) return;
     var newPool = profile.exercisePool.filter(function (e) { return e.id !== id; });
     var next = Object.assign({}, profile, { exercisePool: newPool });
@@ -1041,30 +1040,75 @@
     );
   }
 
+  // Palier infini pour la streak : jours (7) -> mois de 30j (jusqu'à 11) -> 1 an (365j) -> tous les ans ensuite
+  function nextStreakTier(v) {
+    if (v < 7) return 7;
+    if (v < 30) return 30;
+    if (v < 365) {
+      var months = Math.floor(v / 30) + 1;
+      if (months >= 12) return 365;
+      return months * 30;
+    }
+    var years = Math.floor(v / 365) + 1;
+    return years * 365;
+  }
+  function streakTierLabel(days) {
+    if (days < 30) return days + " jours d'affilée";
+    if (days < 365) return Math.round(days / 30) + " mois d'affilée";
+    var years = Math.round(days / 365);
+    return years + " an" + (years > 1 ? "s" : "") + " d'affilée";
+  }
+  function infiniteBadge(id, iconName, firstThreshold, nextTierFn, labelFn, currentValue) {
+    var target = nextTierFn(currentValue);
+    return {
+      id: id,
+      icon: iconName,
+      label: labelFn(target),
+      unlocked: currentValue >= firstThreshold,
+      progress: Math.min(currentValue, target) + "/" + target,
+    };
+  }
+
+  function tierBadge(id, iconName, tiers, tierLabel, currentValue) {
+    var achievedIdx = -1;
+    for (var i = 0; i < tiers.length; i++) { if (currentValue >= tiers[i]) achievedIdx = i; }
+    var unlocked = achievedIdx >= 0;
+    var maxed = achievedIdx === tiers.length - 1;
+    var targetTier = tiers[maxed ? achievedIdx : achievedIdx + 1];
+    return {
+      id: id,
+      icon: iconName,
+      label: tierLabel(targetTier),
+      unlocked: unlocked,
+      progress: maxed ? null : Math.min(currentValue, targetTier) + "/" + targetTier,
+    };
+  }
+
   function computeTrophies() {
     var sessions = profile.history.length;
     var daysAtS = profile.history.filter(function (h) { return h.rank === "S"; }).length;
-    var list = [
-      { id: "streak7", icon: "flame", label: "7 jours d'affilée", unlocked: profile.best >= 7, progress: Math.min(profile.best, 7) + "/7" },
-      { id: "streak30", icon: "flame", label: "30 jours d'affilée", unlocked: profile.best >= 30, progress: Math.min(profile.best, 30) + "/30" },
-      { id: "rankB", icon: "hexagon", label: "Rang B atteint", unlocked: profile.best >= 14 },
-      { id: "rankS", icon: "hexagon", label: "Rang S atteint", unlocked: profile.best >= 60, sub: profile.best >= 60 ? (daysAtS + " jour" + (daysAtS > 1 ? "s" : "") + " en Rang S") : null },
-      { id: "s10", icon: "scroll", label: "10 séances", unlocked: sessions >= 10, progress: Math.min(sessions, 10) + "/10" },
-      { id: "s50", icon: "scroll", label: "50 séances", unlocked: sessions >= 50, progress: Math.min(sessions, 50) + "/50" },
+
+    var streakBadge = infiniteBadge("streak", "flame", 7, nextStreakTier, streakTierLabel, profile.best);
+
+    var rankTiers = [3, 7, 14, 30, 60];
+    var rankNames = { 3: "D", 7: "C", 14: "B", 30: "A", 60: "S" };
+    var rankBadge = tierBadge("rank", "hexagon", rankTiers, function (v) { return "Rang " + rankNames[v] + " atteint"; }, profile.best);
+    if (profile.best >= 60) rankBadge.sub = daysAtS + " jour" + (daysAtS > 1 ? "s" : "") + " en Rang S";
+
+    var sessionTiers = [10, 50, 100];
+    var next = 150;
+    while (next <= sessions) { sessionTiers.push(next); next += 50; }
+    sessionTiers.push(next);
+    var sessionsBadge = tierBadge("sessions", "scroll", sessionTiers, function (v) { return v + " séances"; }, sessions);
+
+    return [
+      streakBadge,
+      rankBadge,
+      sessionsBadge,
       { id: "joker1", icon: "moon", label: "Premier jour de repos", unlocked: profile.history.some(function (h) { return h.mode === "joker"; }) },
       { id: "reeval1", icon: "trendingUp", label: "Première réévaluation", unlocked: profile.history.some(function (h) { return h.mode === "reeval"; }) },
       { id: "redemption1", icon: "zap", label: "Première rédemption réussie", unlocked: profile.history.some(function (h) { return h.mode === "redemption"; }) },
     ];
-    var tiers = [100];
-    if (sessions >= 100) {
-      var next = 150;
-      while (next <= sessions) { tiers.push(next); next += 50; }
-      tiers.push(next);
-    }
-    tiers.forEach(function (t) {
-      list.push({ id: "s" + t, icon: "scroll", label: t + " séances", unlocked: sessions >= t, progress: Math.min(sessions, t) + "/" + t });
-    });
-    return list;
   }
 
   function trophiesTpl() {
@@ -1076,8 +1120,8 @@
         '<div class="' + cls + '" title="' + esc(t.label) + '">' +
           '<div class="slf-trophyicon">' + icon(t.icon, 20, { color: iconColor }) + "</div>" +
           '<p class="slf-trophylabel">' + esc(t.label) + "</p>" +
-          (!t.unlocked && t.progress ? '<p class="slf-trophyprogress">' + esc(t.progress) + "</p>" : "") +
-          (t.unlocked && t.sub ? '<p class="slf-trophyprogress">' + esc(t.sub) + "</p>" : "") +
+          (t.progress ? '<p class="slf-trophyprogress">' + esc(t.progress) + "</p>" : "") +
+          (t.sub ? '<p class="slf-trophyprogress">' + esc(t.sub) + "</p>" : "") +
         "</div>"
       );
     }).join("");
@@ -1225,13 +1269,12 @@
   }
 
   function exercisePoolListTpl() {
-    var canRemove = profile.exercisePool.length > 4;
     var rows = profile.exercisePool.map(function (exo) {
       return (
         '<div class="slf-exorow">' +
           '<div class="slf-taskicon">' + icon(exo.icon, 16) + "</div>" +
           '<div class="slf-taskinfo"><p class="slf-tasklabel">' + esc(exo.label) + '</p><p class="slf-mono slf-tasktarget">' + profile.targets[exo.id] + esc(exo.unit) + "</p></div>" +
-          (canRemove ? '<button class="slf-exoremove" data-action="remove-exercise" data-key="' + exo.id + '" aria-label="Retirer">' + icon("x", 14) + "</button>" : "") +
+          (!exo.builtin ? '<button class="slf-exoremove" data-action="remove-exercise" data-key="' + exo.id + '" aria-label="Retirer">' + icon("x", 14) + "</button>" : '<span class="slf-exobuiltin">DE BASE</span>') +
         "</div>"
       );
     }).join("");
@@ -1328,6 +1371,8 @@
   // ---------- render ----------
   function render() {
     var root = document.getElementById("root");
+    var prevMain = root.querySelector(".slf-main");
+    var prevScroll = prevMain ? prevMain.scrollTop : 0;
     var overlay = getActiveOverlay();
     var overlayHtml = "";
     if (overlay === "onboarding") overlayHtml = onboardingTpl();
@@ -1354,6 +1399,9 @@
       overlayHtml +
       rankUpTpl() +
       errorToastTpl();
+
+    var newMain = root.querySelector(".slf-main");
+    if (newMain && prevScroll) newMain.scrollTop = prevScroll;
   }
 
   // ---------- event delegation ----------

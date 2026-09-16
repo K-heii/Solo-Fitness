@@ -609,6 +609,15 @@ body {
   flex-shrink: 0;
 }
 .slf-exoremove:hover { border-color: var(--danger); color: var(--danger); }
+.slf-exobuiltin {
+  font-size: 9px;
+  color: var(--dim);
+  border: 1px solid var(--cyan-dim);
+  border-radius: 4px;
+  padding: 3px 6px;
+  flex-shrink: 0;
+  letter-spacing: 0.06em;
+}
 
 .slf-addexorow { display: flex; gap: 8px; margin-top: 8px; align-items: stretch; }
 .slf-unittoggle { display: flex; flex: 1; border: 1px solid var(--cyan-dim); border-radius: 6px; overflow: hidden; }
