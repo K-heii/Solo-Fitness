@@ -2,7 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
-  var APP_VERSION = "v3.10 — trophée streak à paliers infinis (jours → mois → années)";
+  var APP_VERSION = "v3.11 — trophées : le titre affiche le palier atteint, pas le suivant";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -32,9 +32,9 @@
   ];
   var REDEMPTION_MULT = 1.5;
 
-  var CHANGELOG_VERSION = "v3.10";
+  var CHANGELOG_VERSION = "v3.11";
   var CHANGELOG_ITEMS = [
-    "Trophée streak infini : après 30 jours, les paliers continuent par mois (2, 3, 4... jusqu'à 11), puis par année (1 an, 2 ans, 3 ans...).",
+    "Trophées : le titre affiche maintenant le dernier palier réellement atteint (ex: \"7 jours d'affilée\" reste affiché jusqu'à 30j), et ne change qu'au moment où le palier suivant est franchi.",
   ];
 
   // ---------- helpers ----------
@@ -1052,19 +1052,32 @@
     var years = Math.floor(v / 365) + 1;
     return years * 365;
   }
+  function currentStreakTier(v) {
+    if (v < 7) return null;
+    if (v < 30) return 7;
+    if (v < 365) {
+      var months = Math.floor(v / 30);
+      if (months > 11) months = 11;
+      return months * 30;
+    }
+    var years = Math.floor(v / 365);
+    return years * 365;
+  }
   function streakTierLabel(days) {
     if (days < 30) return days + " jours d'affilée";
     if (days < 365) return Math.round(days / 30) + " mois d'affilée";
     var years = Math.round(days / 365);
     return years + " an" + (years > 1 ? "s" : "") + " d'affilée";
   }
-  function infiniteBadge(id, iconName, firstThreshold, nextTierFn, labelFn, currentValue) {
+  function infiniteBadge(id, iconName, firstThreshold, nextTierFn, currentTierFn, labelFn, currentValue) {
+    var unlocked = currentValue >= firstThreshold;
     var target = nextTierFn(currentValue);
+    var displayTier = unlocked ? currentTierFn(currentValue) : firstThreshold;
     return {
       id: id,
       icon: iconName,
-      label: labelFn(target),
-      unlocked: currentValue >= firstThreshold,
+      label: labelFn(displayTier),
+      unlocked: unlocked,
       progress: Math.min(currentValue, target) + "/" + target,
     };
   }
@@ -1074,13 +1087,14 @@
     for (var i = 0; i < tiers.length; i++) { if (currentValue >= tiers[i]) achievedIdx = i; }
     var unlocked = achievedIdx >= 0;
     var maxed = achievedIdx === tiers.length - 1;
-    var targetTier = tiers[maxed ? achievedIdx : achievedIdx + 1];
+    var displayTier = unlocked ? tiers[achievedIdx] : tiers[0];
+    var nextTier = maxed ? null : tiers[achievedIdx + 1];
     return {
       id: id,
       icon: iconName,
-      label: tierLabel(targetTier),
+      label: tierLabel(displayTier),
       unlocked: unlocked,
-      progress: maxed ? null : Math.min(currentValue, targetTier) + "/" + targetTier,
+      progress: maxed ? null : Math.min(currentValue, nextTier) + "/" + nextTier,
     };
   }
 
@@ -1088,7 +1102,7 @@
     var sessions = profile.history.length;
     var daysAtS = profile.history.filter(function (h) { return h.rank === "S"; }).length;
 
-    var streakBadge = infiniteBadge("streak", "flame", 7, nextStreakTier, streakTierLabel, profile.best);
+    var streakBadge = infiniteBadge("streak", "flame", 7, nextStreakTier, currentStreakTier, streakTierLabel, profile.best);
 
     var rankTiers = [3, 7, 14, 30, 60];
     var rankNames = { 3: "D", 7: "C", 14: "B", 30: "A", 60: "S" };
