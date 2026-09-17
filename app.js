@@ -2,7 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
-  var APP_VERSION = "v3.11 — trophées : le titre affiche le palier atteint, pas le suivant";
+  var APP_VERSION = "v3.12 — trophées déplacés sous la quête quotidienne";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -32,9 +32,9 @@
   ];
   var REDEMPTION_MULT = 1.5;
 
-  var CHANGELOG_VERSION = "v3.11";
+  var CHANGELOG_VERSION = "v3.12";
   var CHANGELOG_ITEMS = [
-    "Trophées : le titre affiche maintenant le dernier palier réellement atteint (ex: \"7 jours d'affilée\" reste affiché jusqu'à 30j), et ne change qu'au moment où le palier suivant est franchi.",
+    "Les trophées sont déplacés sous la quête quotidienne (au lieu de la page Historique), avec leur propre fenêtre système.",
   ];
 
   // ---------- helpers ----------
@@ -963,6 +963,9 @@
   }
 
   function questTpl() {
+    return questContentTpl() + trophiesTpl();
+  }
+  function questContentTpl() {
     var mode = getMode();
 
     if (mode === "reeval-prompt") return reevalPromptTpl();
@@ -1140,9 +1143,10 @@
       );
     }).join("");
     return (
-      '<div class="slf-trophysection">' +
-        '<p class="slf-mono slf-eyebrow" style="margin-bottom:8px">TROPHÉES</p>' +
-        '<div class="slf-trophygrid">' + cells + "</div>" +
+      '<div class="slf-window" style="margin-top:16px"><div class="slf-windowhead"><span class="slf-mono">◈ TROPHÉES ◈</span></div>' +
+        '<div class="slf-windowbody">' +
+          '<div class="slf-trophygrid">' + cells + "</div>" +
+        "</div>" +
       "</div>"
     );
   }
@@ -1238,7 +1242,6 @@
           '<div class="slf-statchip">' + icon("flame", 14, { color: "#ff9d4d" }) + '<span class="slf-mono">' + profile.best + '</span><span class="slf-dim">record</span></div>' +
           '<div class="slf-statchip">' + icon("scroll", 14) + '<span class="slf-mono">' + profile.history.length + '</span><span class="slf-dim">séances</span></div>' +
         "</div>" +
-        trophiesTpl() +
         heatmapTpl() +
         (profile.history.length === 0
           ? '<div class="slf-empty"><p class="slf-donetext">Aucune quête accomplie.</p><p class="slf-dim">Commence ton ascension, ' + esc(pseudo()) + ".</p></div>"
