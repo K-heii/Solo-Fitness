@@ -2,7 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
-  var APP_VERSION = "v4.0 — badge icône, chrono, hauts faits cachés, élimination des points faibles";
+  var APP_VERSION = "v4.1 — hauts faits sous les trophées, indices tactiles corrigés";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -32,13 +32,10 @@
   ];
   var REDEMPTION_MULT = 1.5;
 
-  var CHANGELOG_VERSION = "v4.0";
+  var CHANGELOG_VERSION = "v4.1";
   var CHANGELOG_ITEMS = [
-    "Badge sur l'icône de l'app : indique en un coup d'œil si la quête du jour est faite (une fois l'app installée).",
-    "Chrono intégré pour le gainage et tout exercice en secondes : démarre, mets en pause, et la case se coche automatiquement à la fin.",
-    "Réactivité tactile améliorée (suppression du délai de tap sur mobile).",
-    "9 Hauts Faits cachés à découvrir dans Voir mes stats (affichés en \"???\" tant qu'ils ne sont pas débloqués).",
-    "Système d'Élimination des Points Faibles : le Système détecte tes exercices négligés et te propose une quête ciblée pour les rattraper.",
+    "Les Hauts Faits sont déplacés juste sous les Trophées, sur la page Quête.",
+    "Correction : un appui sur un \"???\" affiche maintenant un vrai indice à l'écran (l'ancien indice au survol ne fonctionnait pas sur mobile).",
   ];
 
   // ---------- helpers ----------
@@ -202,6 +199,7 @@
     raidCheckedForId: null,
     weakPointChecked: false,
     weakPointCheckedFor: null,
+    hintText: null,
     timerExoId: null,
     timerTarget: 0,
     timerRemaining: 0,
@@ -1197,7 +1195,7 @@
   }
 
   function questTpl() {
-    return questContentTpl() + gateRaidTpl() + weakPointTpl() + trophiesTpl();
+    return questContentTpl() + gateRaidTpl() + weakPointTpl() + trophiesTpl() + hiddenAchievementsTpl();
   }
   function weakPointTpl() {
     var w = weakPointAvailable();
@@ -1488,28 +1486,42 @@
       { id: "clicker", label: "L'Effet Papillon", hint: "???", unlocked: clicker },
     ];
   }
+  function showHint(id) {
+    var a = computeHiddenAchievements().filter(function (x) { return x.id === id; })[0];
+    if (!a) return;
+    var text = a.hint;
+    ui.hintText = text;
+    render();
+    setTimeout(function () {
+      if (ui.hintText === text) {
+        ui.hintText = null;
+        render();
+      }
+    }, 4000);
+  }
+
   function hiddenAchievementsTpl() {
     var list = computeHiddenAchievements();
     var cells = list.map(function (a) {
       if (a.unlocked) {
         return (
-          '<div class="slf-trophy unlocked" title="' + esc(a.label) + '">' +
+          '<div class="slf-trophy unlocked">' +
             '<div class="slf-trophyicon">' + icon("checkCircle", 20, { color: "var(--cyan)" }) + "</div>" +
             '<p class="slf-trophylabel">' + esc(a.label) + "</p>" +
           "</div>"
         );
       }
       return (
-        '<div class="slf-trophy slf-trophy-hidden" title="' + esc(a.hint) + '">' +
+        '<button class="slf-trophy slf-trophy-hidden" data-action="show-hint" data-key="' + a.id + '">' +
           '<div class="slf-trophyicon">' + icon("circle", 20, { color: "var(--dim)" }) + "</div>" +
           '<p class="slf-trophylabel">???</p>' +
-        "</div>"
+        "</button>"
       );
     }).join("");
     return (
       '<div class="slf-window" style="margin-top:16px"><div class="slf-windowhead"><span class="slf-mono">◈ HAUTS FAITS ◈</span></div>' +
         '<div class="slf-windowbody">' +
-          '<p class="slf-dim" style="margin-bottom:10px">Des succès secrets. Découvre-les en jouant — survole ou appuie sur un "???" pour un indice.</p>' +
+          '<p class="slf-dim" style="margin-bottom:10px">Des succès secrets. Appuie sur un "???" pour un indice.</p>' +
           '<div class="slf-trophygrid">' + cells + "</div>" +
         "</div>" +
       "</div>"
@@ -1640,8 +1652,7 @@
         (profile.history.length === 0
           ? '<div class="slf-empty"><p class="slf-donetext">Aucune quête accomplie.</p><p class="slf-dim">Commence ton ascension, ' + esc(pseudo()) + ".</p></div>"
           : '<div class="slf-histlist">' + rows + "</div>") +
-      "</div></div>" +
-      hiddenAchievementsTpl()
+      "</div></div>"
     );
   }
 
@@ -1794,6 +1805,9 @@
   function errorToastTpl() {
     return ui.error ? '<div class="slf-errortoast slf-mono">Sauvegarde impossible — réessaie.</div>' : "";
   }
+  function hintToastTpl() {
+    return ui.hintText ? '<div class="slf-hinttoast"><span class="slf-mono slf-eyebrow">INDICE</span><p>' + esc(ui.hintText) + "</p></div>" : "";
+  }
 
   // ---------- render ----------
   function render() {
@@ -1826,7 +1840,8 @@
       "</div>" +
       overlayHtml +
       rankUpTpl() +
-      errorToastTpl();
+      errorToastTpl() +
+      hintToastTpl();
 
     var newMain = root.querySelector(".slf-main");
     if (newMain && prevScroll) newMain.scrollTop = prevScroll;
@@ -1911,6 +1926,9 @@
         break;
       case "click-rankbadge":
         handleRankBadgeClick();
+        break;
+      case "show-hint":
+        showHint(el.getAttribute("data-key"));
         break;
       case "set-theme":
         setTheme(el.getAttribute("data-value"));

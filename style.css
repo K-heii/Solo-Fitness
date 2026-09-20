@@ -412,6 +412,32 @@ body {
   font-size: 12px;
 }
 
+.slf-hinttoast {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 88%;
+  background: var(--panel2);
+  border: 1px solid var(--cyan);
+  color: var(--text);
+  padding: 10px 16px;
+  border-radius: 8px;
+  box-shadow: 0 0 20px rgba(var(--cyan-rgb),0.25);
+  text-align: center;
+  z-index: 30;
+  animation: slf-rankup-in 0.25s ease;
+}
+.slf-hinttoast .slf-eyebrow { display: block; margin-bottom: 3px; }
+.slf-hinttoast p { margin: 0; font-size: 13px; line-height: 1.4; }
+
+.slf-trophy-hidden {
+  border-style: dashed;
+  font-family: inherit;
+  cursor: pointer;
+}
+.slf-trophy-hidden:active { border-color: var(--cyan); background: rgba(var(--cyan-rgb),0.06); }
+
 .slf-statsrow { display: flex; gap: 8px; margin-bottom: 16px; }
 .slf-statchip {
   flex: 1;
