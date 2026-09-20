@@ -2,7 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "solo-fit-profile-v1";
-  var APP_VERSION = "v3.12 — trophées déplacés sous la quête quotidienne";
+  var APP_VERSION = "v4.0 — badge icône, chrono, hauts faits cachés, élimination des points faibles";
 
   var RANKS = [
     { name: "E", min: 0, glow: "#3ab6ff", label: "Éveillé" },
@@ -32,9 +32,13 @@
   ];
   var REDEMPTION_MULT = 1.5;
 
-  var CHANGELOG_VERSION = "v3.12";
+  var CHANGELOG_VERSION = "v4.0";
   var CHANGELOG_ITEMS = [
-    "Les trophées sont déplacés sous la quête quotidienne (au lieu de la page Historique), avec leur propre fenêtre système.",
+    "Badge sur l'icône de l'app : indique en un coup d'œil si la quête du jour est faite (une fois l'app installée).",
+    "Chrono intégré pour le gainage et tout exercice en secondes : démarre, mets en pause, et la case se coche automatiquement à la fin.",
+    "Réactivité tactile améliorée (suppression du délai de tap sur mobile).",
+    "9 Hauts Faits cachés à découvrir dans Voir mes stats (affichés en \"???\" tant qu'ils ne sont pas débloqués).",
+    "Système d'Élimination des Points Faibles : le Système détecte tes exercices négligés et te propose une quête ciblée pour les rattraper.",
   ];
 
   // ---------- helpers ----------
@@ -119,6 +123,12 @@
       exercisePool: BUILTIN_POOL.map(function (e) { return Object.assign({}, e); }),
       todaySelection: { date: null, ids: [] },
       fx: { enabled: true },
+      totalCustomExercisesAdded: 0,
+      reevalYesStreak: 0,
+      appOpenDaysCount: 0,
+      lastOpenCountedDate: null,
+      hiddenFlags: {},
+      weakPointClearedAt: null,
     };
   }
   function esc(s) {
@@ -152,6 +162,7 @@
     moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="none"/>',
     download2: '<rect x="3" y="16" width="18" height="4" rx="1" fill="none"/><path d="M12 3v10" fill="none"/><polyline points="8,10 12,14 16,10" fill="none"/>',
     arrowLeft: '<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12,5 5,12 12,19" fill="none"/>',
+    stopwatch: '<circle cx="12" cy="13" r="8" fill="none"/><line x1="12" y1="13" x2="15.5" y2="10" stroke-linecap="round"/><line x1="12" y1="5" x2="12" y2="3"/><line x1="9" y1="3" x2="15" y2="3"/>',
   };
   function icon(name, size, opts) {
     opts = opts || {};
@@ -187,6 +198,15 @@
     newExoName: "",
     newExoUnit: "reps",
     newExoError: false,
+    raidChecked: {},
+    raidCheckedForId: null,
+    weakPointChecked: false,
+    weakPointCheckedFor: null,
+    timerExoId: null,
+    timerTarget: 0,
+    timerRemaining: 0,
+    timerRunning: false,
+    rankClickTimes: [],
     rankUpFlash: null,
     error: false,
     installAvailable: false,
@@ -202,6 +222,7 @@
         fx: Object.assign({}, def.fx, loaded.fx),
         exercisePool: loaded.exercisePool && loaded.exercisePool.length >= 4 ? loaded.exercisePool : def.exercisePool,
         todaySelection: Object.assign({}, def.todaySelection, loaded.todaySelection),
+        hiddenFlags: Object.assign({}, def.hiddenFlags, loaded.hiddenFlags),
       });
       // migration silencieuse : un profil qui a déjà de la donnée (créé avant l'onboarding)
       // ne doit jamais repasser par le calibrage initial, au risque d'écraser ses objectifs actuels.
@@ -225,7 +246,16 @@
       ui.error = true;
     }
     applyTheme();
+    updateAppBadge();
     render();
+  }
+  function updateAppBadge() {
+    if (!("setAppBadge" in navigator)) return;
+    try {
+      var done = profile.lastCompletedDate === todayStr();
+      if (done) navigator.clearAppBadge();
+      else navigator.setAppBadge(1);
+    } catch (e) { /* ignore */ }
   }
   function applyTheme() {
     var t = profile.theme && profile.theme !== "blue" ? profile.theme : "";
@@ -273,6 +303,7 @@
     saveProfile(Object.assign({}, profile, {
       exercisePool: profile.exercisePool.concat([exo]),
       targets: newTargets,
+      totalCustomExercisesAdded: profile.totalCustomExercisesAdded + 1,
     }));
   }
   function removeExercise(id) {
@@ -323,6 +354,7 @@
     if (ui.justBroken) return "streak-broken";
     if (shouldShowWelcome()) return "welcome";
     if (getMode() === "redemption" && !ui.redemptionAck) return "redemption-penalty";
+    if (ui.timerExoId) return "timer";
     if (ui.showFeedback) return "feedback";
     return null;
   }
@@ -462,6 +494,7 @@
       mode: mode,
       exercises: exercises,
       rank: getRank(newStreak).name,
+      completedAt: new Date().toISOString(),
     };
     var next = Object.assign({}, profile, {
       streak: newStreak,
@@ -485,8 +518,10 @@
     if (value === "yes") {
       ui.reevalValues = {};
       ui.reevalError = false;
+      saveProfile(Object.assign({}, profile, { reevalYesStreak: profile.reevalYesStreak + 1 }));
+    } else {
+      saveProfile(Object.assign({}, profile, { reevalYesStreak: 0 }));
     }
-    render();
   }
   function setReevalValue(key, raw) {
     var val = parseFloat(raw);
@@ -665,6 +700,16 @@
   function toggleFx() {
     saveProfile(Object.assign({}, profile, { fx: { enabled: !profile.fx.enabled } }));
   }
+  function handleRankBadgeClick() {
+    if (profile.hiddenFlags && profile.hiddenFlags.easterEgg) return;
+    var now = Date.now();
+    ui.rankClickTimes = ui.rankClickTimes.filter(function (t) { return now - t < 5000; });
+    ui.rankClickTimes.push(now);
+    if (ui.rankClickTimes.length >= 10) {
+      ui.rankClickTimes = [];
+      saveProfile(Object.assign({}, profile, { hiddenFlags: Object.assign({}, profile.hiddenFlags, { easterEgg: true }) }));
+    }
+  }
 
   // ---------- export / import ----------
   function exportData() {
@@ -699,6 +744,7 @@
         targets: Object.assign({}, DEFAULT_TARGETS, data.targets),
         fx: Object.assign({}, def.fx, data.fx),
         exercisePool: data.exercisePool && data.exercisePool.length >= 4 ? data.exercisePool : def.exercisePool,
+        hiddenFlags: Object.assign({}, def.hiddenFlags, data.hiddenFlags),
         todaySelection: Object.assign({}, def.todaySelection, data.todaySelection),
       });
       ui.view = "quest";
@@ -792,6 +838,191 @@
   function pickVariant(arr, seed) {
     return arr[hashStr(seed) % arr.length];
   }
+
+  // ---------- Gate Raid ----------
+  function gateRaidSchedule(year, month) {
+    var lastDay = new Date(year, month + 1, 0).getDate();
+    var day1 = 1 + (hashStr("gateraid1-" + year + "-" + month) % 15);
+    var day2 = 16 + (hashStr("gateraid2-" + year + "-" + month) % (lastDay - 15));
+    return { day1: day1, day2: day2 };
+  }
+  function getActiveGateRaid() {
+    var now = Date.now();
+    var d = new Date();
+    var year = d.getFullYear(), month = d.getMonth();
+    for (var offset = -1; offset <= 1; offset++) {
+      var m = month + offset, y = year;
+      if (m < 0) { m = 11; y--; }
+      if (m > 11) { m = 0; y++; }
+      var sched = gateRaidSchedule(y, m);
+      var days = [sched.day1, sched.day2];
+      for (var i = 0; i < days.length; i++) {
+        var start = new Date(y, m, days[i], 0, 0, 0).getTime();
+        var end = new Date(y, m, days[i] + 2, 0, 0, 0).getTime();
+        if (now >= start && now < end) {
+          var raidId = y + "-" + String(m + 1).padStart(2, "0") + "-" + String(days[i]).padStart(2, "0");
+          return { id: raidId, start: start, end: end };
+        }
+      }
+    }
+    return null;
+  }
+  function gateRaidChallenge() {
+    var mult = 4;
+    return profile.exercisePool.map(function (exo) {
+      return { id: exo.id, label: exo.label, unit: exo.unit, icon: exo.icon, target: Math.max(1, Math.round(profile.targets[exo.id] * mult)) };
+    });
+  }
+  function formatCountdown(ms) {
+    if (ms <= 0) return "00:00:00";
+    var totalSec = Math.floor(ms / 1000);
+    var h = Math.floor(totalSec / 3600);
+    var m = Math.floor((totalSec % 3600) / 60);
+    var s = totalSec % 60;
+    function pad(n) { return String(n).padStart(2, "0"); }
+    return pad(h) + ":" + pad(m) + ":" + pad(s);
+  }
+  function toggleRaidExo(id) {
+    ui.raidChecked[id] = !ui.raidChecked[id];
+    fxCheck();
+    render();
+  }
+  function submitRaid() {
+    var raid = getActiveGateRaid();
+    if (!raid) return;
+    var ids = Object.keys(ui.raidChecked);
+    var allChecked = ids.every(function (k) { return ui.raidChecked[k]; });
+    if (!allChecked) return;
+    var challenge = gateRaidChallenge();
+    var entry = {
+      date: todayStr(),
+      mode: "gateraid",
+      raidId: raid.id,
+      exercises: challenge.map(function (c) { return { id: c.id, label: c.label, unit: c.unit, value: c.target, feedback: null }; }),
+      rank: getRank(profile.streak).name,
+    };
+    var next = Object.assign({}, profile, { history: [entry].concat(profile.history) });
+    ui.raidChecked = {};
+    ui.raidCheckedForId = null;
+    saveProfile(next);
+    fxValidate();
+  }
+
+  // ---------- système d'élimination des points faibles ----------
+  function detectWeakPoint() {
+    var cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 21);
+    var cutoffStr = todayStr(cutoff);
+    var tally = {};
+    profile.history.forEach(function (h) {
+      if (h.date < cutoffStr) return;
+      if (h.mode !== "normal" && h.mode !== "redemption") return;
+      if (!h.exercises) return;
+      h.exercises.forEach(function (e) {
+        if (!tally[e.id]) tally[e.id] = { essouffle: 0, total: 0 };
+        tally[e.id].total++;
+        if (e.feedback === "essouffle") tally[e.id].essouffle++;
+      });
+    });
+    var worst = null;
+    Object.keys(tally).forEach(function (id) {
+      var t = tally[id];
+      if (t.total >= 5 && t.essouffle / t.total >= 0.7) {
+        var ratio = t.essouffle / t.total;
+        if (!worst || ratio > worst.ratio) worst = { id: id, ratio: ratio };
+      }
+    });
+    return worst;
+  }
+  function weakPointAvailable() {
+    var w = detectWeakPoint();
+    if (!w) return null;
+    if (profile.weakPointClearedAt && daysBetween(profile.weakPointClearedAt, todayStr()) < 14) return null;
+    if (!profile.exercisePool.some(function (e) { return e.id === w.id; })) return null;
+    return w;
+  }
+  function toggleWeakPoint() {
+    ui.weakPointChecked = !ui.weakPointChecked;
+    fxCheck();
+    render();
+  }
+  function submitWeakPoint() {
+    var w = weakPointAvailable();
+    if (!w || !ui.weakPointChecked) return;
+    var exo = getExoMeta(w.id);
+    var target = Math.max(1, Math.round(profile.targets[w.id] * 1.5));
+    var entry = {
+      date: todayStr(),
+      mode: "weakpoint",
+      exercises: [{ id: w.id, label: exo.label, unit: exo.unit, value: target, feedback: null }],
+      rank: getRank(profile.streak).name,
+    };
+    var next = Object.assign({}, profile, {
+      history: [entry].concat(profile.history),
+      weakPointClearedAt: todayStr(),
+    });
+    ui.weakPointChecked = false;
+    ui.weakPointCheckedFor = null;
+    saveProfile(next);
+    fxValidate();
+  }
+
+  setInterval(function () {
+    var el = document.getElementById("slf-raid-countdown");
+    if (!el) return;
+    var raid = getActiveGateRaid();
+    if (!raid || raid.end - Date.now() <= 0) { render(); return; }
+    el.textContent = formatCountdown(raid.end - Date.now());
+  }, 1000);
+
+  // ---------- chrono d'exercice (gainage & Cie) ----------
+  function formatTimer(s) {
+    s = Math.max(0, Math.round(s));
+    var m = Math.floor(s / 60), sec = s % 60;
+    return String(m).padStart(2, "0") + ":" + String(sec).padStart(2, "0");
+  }
+  function openTimer(exoId) {
+    var mode = getMode();
+    var ids = todayExerciseIds();
+    var targets = mode === "redemption" && ids ? redemptionTargets(profile.targets, ids) : profile.targets;
+    ui.timerExoId = exoId;
+    ui.timerTarget = targets[exoId] || profile.targets[exoId];
+    ui.timerRemaining = ui.timerTarget;
+    ui.timerRunning = false;
+    render();
+  }
+  function startTimer() {
+    ui.timerRunning = true;
+    render();
+  }
+  function pauseTimer() {
+    ui.timerRunning = false;
+    render();
+  }
+  function resetTimer() {
+    ui.timerRemaining = ui.timerTarget;
+    ui.timerRunning = false;
+    render();
+  }
+  function closeTimer() {
+    ui.timerExoId = null;
+    ui.timerRunning = false;
+    render();
+  }
+  setInterval(function () {
+    if (!ui.timerRunning || !ui.timerExoId) return;
+    ui.timerRemaining--;
+    var el = document.getElementById("slf-timer-display");
+    if (el) el.textContent = formatTimer(ui.timerRemaining);
+    if (ui.timerRemaining <= 0) {
+      ui.timerRunning = false;
+      var id = ui.timerExoId;
+      ui.timerExoId = null;
+      ui.checked[id] = true;
+      fxValidate();
+      render();
+    }
+  }, 1000);
   function messageModalTpl(variant, actionAttr, danger) {
     return (
       '<div class="slf-overlay"><div class="slf-modal' + (danger ? " slf-modal-danger" : "") + '" data-stop="1">' +
@@ -851,7 +1082,7 @@
     var rank = getRank(profile.streak);
     return (
       '<header class="slf-header">' +
-        '<div class="slf-rankbadge" style="--glow:' + rank.glow + '">' + icon("hexagon", 40) + '<span class="slf-rankletter">' + rank.name + "</span></div>" +
+        '<div class="slf-rankbadge" style="--glow:' + rank.glow + '" data-action="click-rankbadge">' + icon("hexagon", 40) + '<span class="slf-rankletter">' + rank.name + "</span></div>" +
         '<div class="slf-headerinfo">' +
           '<p class="slf-mono slf-eyebrow">' + esc(rank.label.toUpperCase()) + " · RANG " + rank.name + "</p>" +
           '<div class="slf-streakrow">' + icon("flame", 16, { color: "#ff9d4d" }) + '<span class="slf-mono slf-streaknum">' + profile.streak + '</span><span class="slf-dim">jours</span></div>' +
@@ -877,12 +1108,15 @@
     var key = exo.id;
     var isChecked = ui.checked[key];
     var disabled = mode === "done";
+    var isTimeBased = exo.unit === "s";
+    var timerBtn = isTimeBased && !disabled ? '<button class="slf-timerbtn" data-action="open-timer" data-key="' + key + '" aria-label="Chrono">' + icon("stopwatch", 16) + "</button>" : "";
     return (
-      '<button class="slf-taskrow' + (isChecked ? " done" : "") + '" ' + (disabled ? "" : 'data-action="toggle-task" data-key="' + key + '"') + '>' +
+      '<div class="slf-taskrow' + (isChecked ? " done" : "") + '" ' + (disabled ? "" : 'data-action="toggle-task" data-key="' + key + '"') + '>' +
         '<div class="slf-taskicon">' + icon(exo.icon, 18) + "</div>" +
         '<div class="slf-taskinfo"><p class="slf-tasklabel">' + esc(exo.label) + '</p><p class="slf-mono slf-tasktarget">' + targets[key] + esc(exo.unit) + "</p></div>" +
+        timerBtn +
         (isChecked ? icon("checkCircle", 22, { color: "#2fd7ff" }) : icon("circle", 22, { color: "#28425e" })) +
-      "</button>"
+      "</div>"
     );
   }
 
@@ -963,7 +1197,70 @@
   }
 
   function questTpl() {
-    return questContentTpl() + trophiesTpl();
+    return questContentTpl() + gateRaidTpl() + weakPointTpl() + trophiesTpl();
+  }
+  function weakPointTpl() {
+    var w = weakPointAvailable();
+    if (!w) return "";
+    if (ui.weakPointCheckedFor !== w.id) {
+      ui.weakPointChecked = false;
+      ui.weakPointCheckedFor = w.id;
+    }
+    var exo = getExoMeta(w.id);
+    var target = Math.max(1, Math.round(profile.targets[w.id] * 1.5));
+    var checked = ui.weakPointChecked;
+    return (
+      '<div class="slf-window slf-weakwindow" style="margin-top:16px">' +
+        '<div class="slf-windowhead weak"><span class="slf-mono">◈ ÉRADICATION DE FAIBLESSE ◈</span></div>' +
+        '<div class="slf-windowbody">' +
+          '<p class="slf-dim" style="margin-bottom:10px">Le Système a détecté un déséquilibre récurrent : ' + esc(exo.label) + ". Corrige-le.</p>" +
+          '<div class="slf-taskrow' + (checked ? " done" : "") + '" data-action="toggle-weakpoint">' +
+            '<div class="slf-taskicon">' + icon(exo.icon, 18) + "</div>" +
+            '<div class="slf-taskinfo"><p class="slf-tasklabel">' + esc(exo.label) + '</p><p class="slf-mono slf-tasktarget">' + target + esc(exo.unit) + "</p></div>" +
+            (checked ? icon("checkCircle", 22, { color: "#7ed957" }) : icon("circle", 22, { color: "#28425e" })) +
+          "</div>" +
+          '<button class="slf-cta" ' + (checked ? 'data-action="submit-weakpoint"' : "disabled") + ">Corriger le déséquilibre</button>" +
+        "</div>" +
+      "</div>"
+    );
+  }
+  function gateRaidTpl() {
+    var raid = getActiveGateRaid();
+    if (!raid) return "";
+    var alreadyDone = profile.history.some(function (h) { return h.mode === "gateraid" && h.raidId === raid.id; });
+    if (alreadyDone) return "";
+
+    if (ui.raidCheckedForId !== raid.id) {
+      var fresh = {};
+      profile.exercisePool.forEach(function (exo) { fresh[exo.id] = false; });
+      ui.raidChecked = fresh;
+      ui.raidCheckedForId = raid.id;
+    }
+    var challenge = gateRaidChallenge();
+    var rows = challenge.map(function (c) {
+      var checked = ui.raidChecked[c.id];
+      return (
+        '<button class="slf-taskrow' + (checked ? " done" : "") + '" data-action="toggle-raid" data-key="' + c.id + '">' +
+          '<div class="slf-taskicon">' + icon(c.icon, 18) + "</div>" +
+          '<div class="slf-taskinfo"><p class="slf-tasklabel">' + esc(c.label) + '</p><p class="slf-mono slf-tasktarget">' + c.target + esc(c.unit) + "</p></div>" +
+          (checked ? icon("checkCircle", 22, { color: "#2fd7ff" }) : icon("circle", 22, { color: "#28425e" })) +
+        "</button>"
+      );
+    }).join("");
+    var doneCount = Object.keys(ui.raidChecked).filter(function (k) { return ui.raidChecked[k]; }).length;
+    var allChecked = doneCount === Object.keys(ui.raidChecked).length;
+
+    return (
+      '<div class="slf-window slf-raidwindow" style="margin-top:16px">' +
+        '<div class="slf-windowhead raid"><span class="slf-mono">◈ GATE RAID — PORTAIL D\'INCURSION ◈</span></div>' +
+        '<div class="slf-windowbody">' +
+          '<p class="slf-dim" style="margin-bottom:8px">Un portail instable s\'est ouvert. Referme-le avant l\'effondrement.</p>' +
+          '<p class="slf-mono slf-raidcountdown" id="slf-raid-countdown">' + formatCountdown(raid.end - Date.now()) + "</p>" +
+          rows +
+          '<button class="slf-cta" ' + (allChecked ? 'data-action="submit-raid"' : "disabled") + ">Refermer le Portail</button>" +
+        "</div>" +
+      "</div>"
+    );
   }
   function questContentTpl() {
     var mode = getMode();
@@ -1118,14 +1415,105 @@
     sessionTiers.push(next);
     var sessionsBadge = tierBadge("sessions", "scroll", sessionTiers, function (v) { return v + " séances"; }, sessions);
 
+    var raidCount = profile.history.filter(function (h) { return h.mode === "gateraid"; }).length;
+    var raidTiers = [1, 5];
+    var rn = 10;
+    while (rn <= raidCount) { raidTiers.push(rn); rn += 5; }
+    raidTiers.push(rn);
+    var raidBadge = tierBadge("gateraid", "sword", raidTiers, function () { return "Briseur de Portail"; }, raidCount);
+
     return [
       streakBadge,
       rankBadge,
       sessionsBadge,
+      raidBadge,
       { id: "joker1", icon: "moon", label: "Premier jour de repos", unlocked: profile.history.some(function (h) { return h.mode === "joker"; }) },
       { id: "reeval1", icon: "trendingUp", label: "Première réévaluation", unlocked: profile.history.some(function (h) { return h.mode === "reeval"; }) },
       { id: "redemption1", icon: "zap", label: "Première rédemption réussie", unlocked: profile.history.some(function (h) { return h.mode === "redemption"; }) },
+      { id: "harmonieux", icon: "checkCircle", label: "Profil Harmonieux", unlocked: profile.history.some(function (h) { return h.mode === "weakpoint"; }) },
     ];
+  }
+
+  // ---------- hauts faits cachés ----------
+  function isPerfectNormalDay(dateStr) {
+    var h = profile.history.filter(function (e) { return e.date === dateStr; })[0];
+    if (!h || h.mode !== "normal" || !h.exercises || h.exercises.length === 0) return false;
+    return h.exercises.every(function (e) { return e.feedback === "facile"; });
+  }
+  function hasConsecutivePerfectDays(n, mustStartMonday) {
+    var seen = {};
+    profile.history.forEach(function (h) { seen[h.date] = true; });
+    for (var i = 0; i < profile.history.length; i++) {
+      var start = new Date(profile.history[i].date + "T00:00:00");
+      if (mustStartMonday && start.getDay() !== 1) continue;
+      var ok = true;
+      for (var d = 0; d < n; d++) {
+        var day = new Date(start);
+        day.setDate(day.getDate() + d);
+        if (!isPerfectNormalDay(todayStr(day))) { ok = false; break; }
+      }
+      if (ok) return true;
+    }
+    return false;
+  }
+  function computeHiddenAchievements() {
+    var earlyBird = profile.history.some(function (h) {
+      if (!h.completedAt) return false;
+      var t = new Date(h.completedAt);
+      return t.getHours() >= 4 && t.getHours() < 7;
+    });
+    var nightOwl = profile.history.some(function (h) {
+      if (!h.completedAt) return false;
+      var t = new Date(h.completedAt);
+      var mins = t.getHours() * 60 + t.getMinutes();
+      return mins >= 23 * 60 + 30 || mins < 4 * 60;
+    });
+    var mastery = hasConsecutivePerfectDays(7, false);
+    var perfectWeek = hasConsecutivePerfectDays(7, true);
+    var revenant = profile.history.filter(function (h) { return h.mode === "redemption"; }).length >= 5;
+    var forgeron = profile.totalCustomExercisesAdded >= 5;
+    var assidu = profile.reevalYesStreak >= 10;
+    var sansFin = profile.appOpenDaysCount >= 100;
+    var clicker = !!(profile.hiddenFlags && profile.hiddenFlags.easterEgg);
+
+    return [
+      { id: "earlybird", label: "Lève-toi, Ombre", hint: "Valide ta quête très tôt le matin.", unlocked: earlyBird },
+      { id: "nightowl", label: "Nuit Blanche", hint: "Valide ta quête en pleine nuit.", unlocked: nightOwl },
+      { id: "mastery", label: "La Voie du Perfectionniste", hint: "7 jours d'affilée en \"Facile\", sans joker ni rédemption.", unlocked: mastery },
+      { id: "perfectweek", label: "Semaine Parfaite", hint: "Une semaine calendaire (lundi à dimanche) parfaite.", unlocked: perfectWeek },
+      { id: "revenant", label: "Le Revenant", hint: "Réussis 5 quêtes de rédemption.", unlocked: revenant },
+      { id: "forgeron", label: "Le Forgeron", hint: "Ajoute 5 exercices personnalisés à ton pool.", unlocked: forgeron },
+      { id: "assidu", label: "L'Assidu", hint: "Réponds \"oui\" au Reevaluation Day 10 dimanches d'affilée.", unlocked: assidu },
+      { id: "sansfin", label: "Un Jour Sans Fin", hint: "Ouvre l'app 100 jours différents.", unlocked: sansFin },
+      { id: "clicker", label: "L'Effet Papillon", hint: "???", unlocked: clicker },
+    ];
+  }
+  function hiddenAchievementsTpl() {
+    var list = computeHiddenAchievements();
+    var cells = list.map(function (a) {
+      if (a.unlocked) {
+        return (
+          '<div class="slf-trophy unlocked" title="' + esc(a.label) + '">' +
+            '<div class="slf-trophyicon">' + icon("checkCircle", 20, { color: "var(--cyan)" }) + "</div>" +
+            '<p class="slf-trophylabel">' + esc(a.label) + "</p>" +
+          "</div>"
+        );
+      }
+      return (
+        '<div class="slf-trophy slf-trophy-hidden" title="' + esc(a.hint) + '">' +
+          '<div class="slf-trophyicon">' + icon("circle", 20, { color: "var(--dim)" }) + "</div>" +
+          '<p class="slf-trophylabel">???</p>' +
+        "</div>"
+      );
+    }).join("");
+    return (
+      '<div class="slf-window" style="margin-top:16px"><div class="slf-windowhead"><span class="slf-mono">◈ HAUTS FAITS ◈</span></div>' +
+        '<div class="slf-windowbody">' +
+          '<p class="slf-dim" style="margin-bottom:10px">Des succès secrets. Découvre-les en jouant — survole ou appuie sur un "???" pour un indice.</p>' +
+          '<div class="slf-trophygrid">' + cells + "</div>" +
+        "</div>" +
+      "</div>"
+    );
   }
 
   function trophiesTpl() {
@@ -1202,6 +1590,8 @@
       if (h.mode === "redemption") modePill = '<span class="slf-pill danger">RÉDEMPTION</span>';
       else if (h.mode === "reeval") modePill = '<span class="slf-pill reeval">RÉÉVALUATION</span>';
       else if (h.mode === "joker") modePill = '<span class="slf-pill joker">REPOS</span>';
+      else if (h.mode === "gateraid") modePill = '<span class="slf-pill gateraid">GATE RAID</span>';
+      else if (h.mode === "weakpoint") modePill = '<span class="slf-pill weakpoint">CIBLÉE</span>';
 
       var exoList = h.exercises || (h.mode !== "joker" ? legacyExosFromEntry(h) : []);
 
@@ -1210,6 +1600,10 @@
         rightIcons = icon("trendingUp", 14, { color: "#ffd76a" });
       } else if (h.mode === "joker") {
         rightIcons = icon("moon", 14, { color: "#7ed957" });
+      } else if (h.mode === "gateraid") {
+        rightIcons = icon("sword", 14, { color: "#a78bfa" });
+      } else if (h.mode === "weakpoint") {
+        rightIcons = icon("checkCircle", 14, { color: "#7ed957" });
       } else {
         rightIcons = exoList.map(function (e) {
           var easy = e.feedback === "facile";
@@ -1246,7 +1640,8 @@
         (profile.history.length === 0
           ? '<div class="slf-empty"><p class="slf-donetext">Aucune quête accomplie.</p><p class="slf-dim">Commence ton ascension, ' + esc(pseudo()) + ".</p></div>"
           : '<div class="slf-histlist">' + rows + "</div>") +
-      "</div></div>"
+      "</div></div>" +
+      hiddenAchievementsTpl()
     );
   }
 
@@ -1256,6 +1651,21 @@
         '<button class="slf-navbtn' + (ui.view === "quest" ? " active" : "") + '" data-action="nav" data-view="quest">' + icon("sword", 18) + "<span>Quête</span></button>" +
         '<button class="slf-navbtn' + (ui.view === "history" ? " active" : "") + '" data-action="nav" data-view="history">' + icon("scroll", 18) + "<span>Voir mes stats</span></button>" +
       "</nav>"
+    );
+  }
+
+  function timerModalTpl() {
+    var exo = getExoMeta(ui.timerExoId);
+    return (
+      '<div class="slf-overlay"><div class="slf-modal" data-stop="1">' +
+        '<p class="slf-mono slf-eyebrow">CHRONO — ' + esc(exo.label.toUpperCase()) + "</p>" +
+        '<p class="slf-timerdisplay" id="slf-timer-display">' + formatTimer(ui.timerRemaining) + "</p>" +
+        '<div style="display:flex;gap:8px;margin-top:6px">' +
+          '<button class="slf-cta" style="flex:1" data-action="' + (ui.timerRunning ? "pause-timer" : "start-timer") + '">' + (ui.timerRunning ? "Pause" : "Démarrer") + "</button>" +
+          '<button class="slf-togglebtn" style="flex:1" data-action="reset-timer">Réinitialiser</button>' +
+        "</div>" +
+        '<button class="slf-togglebtn" style="margin-top:8px;width:100%" data-action="close-timer">Fermer</button>' +
+      "</div></div>"
     );
   }
 
@@ -1397,6 +1807,7 @@
     else if (overlay === "streak-broken") overlayHtml = streakBrokenTpl();
     else if (overlay === "welcome") overlayHtml = welcomeModalTpl();
     else if (overlay === "redemption-penalty") overlayHtml = redemptionPenaltyTpl();
+    else if (overlay === "timer") overlayHtml = timerModalTpl();
     else if (overlay === "feedback") overlayHtml = feedbackModalTpl();
 
     var isSettings = ui.view === "settings";
@@ -1444,6 +1855,33 @@
       case "submit-selection":
         submitSelection();
         break;
+      case "toggle-weakpoint":
+        toggleWeakPoint();
+        break;
+      case "submit-weakpoint":
+        submitWeakPoint();
+        break;
+      case "toggle-raid":
+        toggleRaidExo(el.getAttribute("data-key"));
+        break;
+      case "submit-raid":
+        submitRaid();
+        break;
+      case "open-timer":
+        openTimer(el.getAttribute("data-key"));
+        break;
+      case "start-timer":
+        startTimer();
+        break;
+      case "pause-timer":
+        pauseTimer();
+        break;
+      case "reset-timer":
+        resetTimer();
+        break;
+      case "close-timer":
+        closeTimer();
+        break;
       case "toggle-task":
         toggleTask(el.getAttribute("data-key"));
         break;
@@ -1470,6 +1908,9 @@
         break;
       case "toggle-fx":
         toggleFx();
+        break;
+      case "click-rankbadge":
+        handleRankBadgeClick();
         break;
       case "set-theme":
         setTheme(el.getAttribute("data-value"));
@@ -1540,6 +1981,14 @@
   });
 
   ui.justBroken = checkAndApplyStreakBreak();
+  if (profile.onboarded && profile.lastOpenCountedDate !== todayStr()) {
+    profile = Object.assign({}, profile, {
+      appOpenDaysCount: profile.appOpenDaysCount + 1,
+      lastOpenCountedDate: todayStr(),
+    });
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(profile)); } catch (e) { /* ignore */ }
+  }
   applyTheme();
+  updateAppBadge();
   render();
 })();

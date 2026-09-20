@@ -26,6 +26,7 @@ html, body {
   font-family: 'Chakra Petch', sans-serif;
   min-height: 100vh;
   overscroll-behavior-y: contain;
+  touch-action: manipulation;
 }
 
 body {
@@ -206,6 +207,29 @@ body {
 .slf-taskinfo { flex: 1; }
 .slf-tasklabel { font-size: 14px; font-weight: 600; margin: 0; }
 .slf-tasktarget { font-size: 12px; color: var(--dim); margin: 2px 0 0; }
+.slf-timerbtn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--cyan-dim);
+  border-radius: 6px;
+  background: rgba(var(--cyan-rgb),0.06);
+  color: var(--cyan);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+.slf-timerdisplay {
+  text-align: center;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 42px;
+  color: var(--cyan);
+  letter-spacing: 0.06em;
+  margin: 10px 0 16px;
+  text-shadow: 0 0 14px rgba(var(--cyan-rgb),0.4);
+}
 
 .slf-progressbar {
   height: 5px;
@@ -469,6 +493,24 @@ body {
 .slf-pill.danger { background: rgba(var(--danger-rgb),0.15); color: var(--danger); }
 .slf-pill.reeval { background: rgba(255,215,106,0.15); color: #ffd76a; }
 .slf-pill.joker { background: rgba(157,179,201,0.15); color: #9db3c9; }
+.slf-pill.gateraid { background: rgba(167,139,250,0.15); color: #a78bfa; }
+.slf-pill.weakpoint { background: rgba(126,217,87,0.15); color: #7ed957; }
+
+.slf-trophy-hidden { border-style: dashed; }
+.slf-trophy-hidden .slf-trophylabel { letter-spacing: 0.15em; color: var(--dim); }
+
+.slf-raidwindow { border-color: #a78bfa !important; box-shadow: 0 0 24px rgba(167,139,250,0.18) !important; }
+.slf-windowhead.raid { color: #a78bfa !important; border-color: rgba(167,139,250,0.35) !important; }
+.slf-weakwindow { border-color: #7ed957 !important; box-shadow: 0 0 24px rgba(126,217,87,0.15) !important; }
+.slf-windowhead.weak { color: #7ed957 !important; border-color: rgba(126,217,87,0.35) !important; }
+.slf-raidcountdown {
+  text-align: center;
+  font-size: 24px;
+  color: #a78bfa;
+  letter-spacing: 0.08em;
+  margin: 4px 0 14px;
+  text-shadow: 0 0 12px rgba(167,139,250,0.5);
+}
 
 .slf-numinput {
   width: 64px;
